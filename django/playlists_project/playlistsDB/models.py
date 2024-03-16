@@ -8,7 +8,7 @@ class django_user(AbstractUser):
     class Meta:
         verbose_name_plural = "Django Users"
 class user(models.Model):
-    id = models.BigIntegerField(primary_key=True)
+    id = models.CharField(max_length=255,primary_key=True)
     name = models.CharField(max_length=255, blank=True, null=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField()
@@ -23,7 +23,7 @@ class user(models.Model):
 
 class playlist(models.Model):
     user = models.ForeignKey(user, blank=True, null=True)
-    link = models.CharField(max_length=255,primary_key=True)
+    id = models.CharField(max_length=255,primary_key=True)
     title = models.CharField(max_length=255, blank=True, null=True)
     is_private = models.BooleanField(blank=True, null=True)
     description = models.CharField(max_length=255, blank=True, null=True) 
@@ -38,7 +38,7 @@ class playlist(models.Model):
         return f"{self.title}"
     
 class video(models.Model):
-    link = models.CharField(max_length=255,primary_key=True)
+    id = models.CharField(max_length=255,primary_key=True)
     title = models.CharField(max_length=255, blank=True, null=True)
     description = models.CharField(max_length=255, blank=True, null=True) 
     created_at = models.DateTimeField(auto_now_add=True)

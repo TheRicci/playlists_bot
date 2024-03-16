@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/bwmarrin/discordgo"
 	"github.com/joho/godotenv"
@@ -43,28 +44,38 @@ func playlistVideos(service *youtube.Service, part, playlistId, token string) *y
 	return response
 }
 
-func fetchVideos(playlistID string) {
+func fetchVideos(playlistID string) []Video {
 	ctx := context.Background()
 	youtubeService, err := youtube.NewService(ctx, option.WithAPIKey(os.Getenv("YOUTUBE_KEY")))
 	if err != nil {
 		log.Fatalf("Error creating YouTube client: %v", err)
 	}
 
-	token := ""
+	var videos []Video
+	pageToken := ""
+	now := time.Now()
 	for true {
-		response := playlistVideos(youtubeService, "snippet", playlistID, token)
+		response := playlistVideos(youtubeService, "snippet", playlistID, pageToken)
 
 		for _, item := range response.Items {
 			fmt.Println(item.Id, ": ", item.Snippet.Title)
+			videos = append(videos, Video{
+				ID:          item.Snippet.Title,
+				Title:       item.Snippet.Title,
+				Description: item.Snippet.Description,
+				Updated_at:  &now,
+				Created_at:  &now,
+			})
 		}
 
 		if response.NextPageToken == "" {
 			break
 		}
 
-		token = response.NextPageToken
-
+		pageToken = response.NextPageToken
 	}
+
+	return videos
 }
 
 func main() {

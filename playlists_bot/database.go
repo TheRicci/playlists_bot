@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/rs/zerolog/log"
 	"github.com/uptrace/bun"
@@ -15,6 +16,33 @@ import (
 
 type database struct {
 	*bun.DB
+}
+
+type User struct {
+	ID            string
+	Name          string
+	Updated_at    *time.Time
+	Created_at    *time.Time
+	bun.BaseModel `bun:"playlistsDB_user"`
+}
+
+type Playlist struct {
+	ID            string
+	Title         string
+	Is_private    bool
+	Description   string
+	Updated_at    *time.Time
+	Created_at    *time.Time
+	bun.BaseModel `bun:"playlistsDB_playlist"`
+}
+
+type Video struct {
+	ID            string
+	Title         string
+	Description   string
+	Updated_at    *time.Time
+	Created_at    *time.Time
+	bun.BaseModel `bun:"playlistsDB_video"`
 }
 
 func newDB() *database {

@@ -13,32 +13,6 @@ import (
 
 type messageComponents []discordgo.MessageComponent
 
-type User struct {
-	ID         int64
-	Name       string
-	Updated_at *time.Time
-	Created_at *time.Time
-}
-
-type Playlist struct {
-	ID          string
-	Title       string
-	link        bool
-	Is_private  bool
-	Description string
-	Updated_at  *time.Time
-	Created_at  *time.Time
-}
-
-type Video struct {
-	ID          string
-	Title       string
-	link        bool
-	Description string
-	Updated_at  *time.Time
-	Created_at  *time.Time
-}
-
 var (
 	integerOptionMinValue = float64(721)
 	commands              = []*discordgo.ApplicationCommand{
@@ -48,41 +22,94 @@ var (
 			Options: []*discordgo.ApplicationCommandOption{
 				{
 					Type:        discordgo.ApplicationCommandOptionString,
-					Name:        "playist",
+					Name:        "ID",
 					Description: "playlist string",
+					Required:    true,
+				},
+				{
+					Type:        discordgo.ApplicationCommandOptionString,
+					Name:        "Title",
+					Description: "playlist title",
+					Required:    true,
+				},
+				{
+					Type:        discordgo.ApplicationCommandOptionString,
+					Name:        "Description",
+					Description: "playlist description",
+					Required:    true,
+				},
+				{
+					Type:        discordgo.ApplicationCommandOptionBoolean,
+					Name:        "private?",
+					Description: "activate playlist privacy",
 					Required:    true,
 				},
 			},
 		},
 		{
 			Name:        "show-playlists",
-			Description: "",
+			Description: "display playlists",
+		},
+		{
+			Name:        "auto-add-everything",
+			Description: "Command for adding a playlist",
+			Options: []*discordgo.ApplicationCommandOption{
+				{
+					Type:        discordgo.ApplicationCommandOptionString,
+					Name:        "channel id",
+					Description: "use channel id to add everything",
+					Required:    true,
+				},
+			},
+		},
+		{
+			Name:        "set-playlist-privacy",
+			Description: "Command for adding a playlist",
+			Options: []*discordgo.ApplicationCommandOption{
+				{
+					Type:        discordgo.ApplicationCommandOptionString,
+					Name:        "playlist id",
+					Description: "use channel id to add everything",
+					Required:    true,
+				},
+				{
+					Type:        discordgo.ApplicationCommandOptionString,
+					Name:        "playlist id",
+					Description: "use channel id to add everything",
+					Required:    true,
+				},
+			},
 		},
 	}
 	commandHandlers = map[string]func(s *discordgo.Session, i *discordgo.InteractionCreate, b *Bot){
 		"add-playlist": func(s *discordgo.Session, i *discordgo.InteractionCreate, b *Bot) {
 			ctx := context.Background()
+			now := time.Now()
 			options := i.ApplicationCommandData().Options
 
-			err := s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
-				Type: discordgo.InteractionResponseChannelMessageWithSource,
-				Data: &discordgo.InteractionResponseData{
-					Content: "fetching videos from playlist..",
-					Flags:   64,
-				},
-			})
+			err := b.DB.NewSelect().Model(&Playlist{}).Where("id = ?", options[0].StringValue()).Scan(ctx)
+			if err == nil {
+				log.Err(err).Msg("error while reacting to define-start-channel command")
+			}
+
+			_ = s.InteractionRespond(i.Interaction, b.newSimpleInteraction("fetching videos from playlist..", int(discordgo.InteractionResponseChannelMessageWithSource)))
 
 			tx, err := b.DB.BeginTx(context.Background(), &sql.TxOptions{})
 
-			b.DB.NewSelect().Model(&User{}).Where("id = ?", i.Member.User.ID).Scan(ctx)
+			if err != nil {
+				log.Err(err).Msg("error while reacting to define-start-channel command")
+			}
 
+			err = b.DB.NewSelect().Model(&User{}).Where("id = ?", i.Member.User.ID).Scan(ctx)
 			if err != nil {
 				if err == sql.ErrNoRows {
-					tx.NewInsert().Model(&User{}).Exec(ctx)
+					tx.NewInsert().Model(&User{ID: i.Member.User.ID, Name: i.Member.Nick, Updated_at: &now, Created_at: &now}).Exec(ctx)
 				}
 				log.Err(err).Msg("error while checking if user exists.")
 				return
 			}
+
+			videos := fetchVideos(options[0].StringValue())
 
 			b.DB.NewInsert().Model()
 
@@ -121,7 +148,7 @@ func (b *Bot) interactionHandler(s *discordgo.Session, i *discordgo.InteractionC
 	}
 }
 
-func (b *Bot) newInteraction(title, footer, content string, mC []discordgo.MessageComponent, respType int) *discordgo.InteractionResponse {
+func (b *Bot) newEmbededInteraction(title, footer, content string, mC []discordgo.MessageComponent, respType int) *discordgo.InteractionResponse {
 	return &discordgo.InteractionResponse{
 		Type: discordgo.InteractionResponseType(respType),
 		Data: &discordgo.InteractionResponseData{
@@ -136,6 +163,16 @@ func (b *Bot) newInteraction(title, footer, content string, mC []discordgo.Messa
 				Components: mC,
 			},
 			},
+		},
+	}
+}
+
+func (b *Bot) newSimpleInteraction(content string, respType int) *discordgo.InteractionResponse {
+	return &discordgo.InteractionResponse{
+		Type: discordgo.InteractionResponseType(respType),
+		Data: &discordgo.InteractionResponseData{
+			Content: content,
+			Flags:   64,
 		},
 	}
 }
