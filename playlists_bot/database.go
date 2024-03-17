@@ -29,7 +29,6 @@ type User struct {
 type Playlist struct {
 	ID            string
 	Title         string
-	Is_private    bool
 	Description   string
 	Updated_at    *time.Time
 	Created_at    *time.Time
@@ -43,6 +42,12 @@ type Video struct {
 	Updated_at    *time.Time
 	Created_at    *time.Time
 	bun.BaseModel `bun:"playlistsDB_video"`
+}
+
+type PlaylistVideo struct {
+	playlist      string
+	video         string
+	bun.BaseModel `bun:"playlistsDB_playlist_video"`
 }
 
 func newDB() *database {

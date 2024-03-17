@@ -32,19 +32,17 @@ func newBot() Bot {
 	}
 }
 
-func playlistVideos(service *youtube.Service, part, playlistId, token string) *youtube.PlaylistItemListResponse {
+func playlistVideos(service *youtube.Service, part, playlistId, token string) (*youtube.PlaylistItemListResponse, error) {
 	call := service.PlaylistItems.List([]string{part}).PlaylistId(playlistId).MaxResults(50)
 
 	if token != "" {
 		call = call.PageToken(token)
 	}
 
-	response, err := call.Do()
-	handleError(err, "")
-	return response
+	return call.Do()
 }
 
-func fetchVideos(playlistID string) []Video {
+func fetchVideos(playlistID string) (*[]Video, error) {
 	ctx := context.Background()
 	youtubeService, err := youtube.NewService(ctx, option.WithAPIKey(os.Getenv("YOUTUBE_KEY")))
 	if err != nil {
@@ -55,7 +53,11 @@ func fetchVideos(playlistID string) []Video {
 	pageToken := ""
 	now := time.Now()
 	for true {
-		response := playlistVideos(youtubeService, "snippet", playlistID, pageToken)
+		response, err := playlistVideos(youtubeService, "snippet", playlistID, pageToken)
+
+		if err != nil {
+			return nil, err
+		}
 
 		for _, item := range response.Items {
 			fmt.Println(item.Id, ": ", item.Snippet.Title)
@@ -75,7 +77,7 @@ func fetchVideos(playlistID string) []Video {
 		pageToken = response.NextPageToken
 	}
 
-	return videos
+	return &videos, nil
 }
 
 func main() {
@@ -97,13 +99,4 @@ func main() {
 	<-sc
 	_ = bot.Close()
 
-}
-
-func handleError(err error, message string) {
-	if message == "" {
-		message = "Error making API call"
-	}
-	if err != nil {
-		log.Fatalf(message+": %v", err.Error())
-	}
 }

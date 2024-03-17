@@ -38,12 +38,14 @@ var (
 					Description: "playlist description",
 					Required:    true,
 				},
-				{
-					Type:        discordgo.ApplicationCommandOptionBoolean,
-					Name:        "private?",
-					Description: "activate playlist privacy",
-					Required:    true,
-				},
+				/*
+					{
+						Type:        discordgo.ApplicationCommandOptionBoolean,
+						Name:        "private?",
+						Description: "activate playlist privacy",
+						Required:    true,
+					},
+				*/
 			},
 		},
 		{
@@ -83,51 +85,91 @@ var (
 	}
 	commandHandlers = map[string]func(s *discordgo.Session, i *discordgo.InteractionCreate, b *Bot){
 		"add-playlist": func(s *discordgo.Session, i *discordgo.InteractionCreate, b *Bot) {
+			//check if playlist is on db
+			//check and add user
+			//check and add playlist
+			//add videos
+			//link video with playlist on the junction table
 			ctx := context.Background()
 			now := time.Now()
 			options := i.ApplicationCommandData().Options
 
 			err := b.DB.NewSelect().Model(&Playlist{}).Where("id = ?", options[0].StringValue()).Scan(ctx)
 			if err == nil {
-				log.Err(err).Msg("error while reacting to define-start-channel command")
+				_ = s.InteractionRespond(i.Interaction, b.newSimpleInteraction("playlist already added.", int(discordgo.InteractionResponseChannelMessageWithSource)))
+				return
 			}
 
 			_ = s.InteractionRespond(i.Interaction, b.newSimpleInteraction("fetching videos from playlist..", int(discordgo.InteractionResponseChannelMessageWithSource)))
 
 			tx, err := b.DB.BeginTx(context.Background(), &sql.TxOptions{})
-
 			if err != nil {
-				log.Err(err).Msg("error while reacting to define-start-channel command")
+				_ = s.InteractionRespond(i.Interaction, b.newSimpleInteraction("internal error", int(discordgo.InteractionResponseChannelMessageWithSource)))
+				log.Err(err).Msg("error while initializing a transaction on add-playlist command.")
+				return
 			}
 
 			err = b.DB.NewSelect().Model(&User{}).Where("id = ?", i.Member.User.ID).Scan(ctx)
 			if err != nil {
 				if err == sql.ErrNoRows {
-					tx.NewInsert().Model(&User{ID: i.Member.User.ID, Name: i.Member.Nick, Updated_at: &now, Created_at: &now}).Exec(ctx)
+					_, err := tx.NewInsert().Model(&User{ID: i.Member.User.ID, Name: i.Member.Nick, Updated_at: &now, Created_at: &now}).Exec(ctx)
+					if err != nil {
+						_ = s.InteractionRespond(i.Interaction, b.newSimpleInteraction("internal error", int(discordgo.InteractionResponseChannelMessageWithSource)))
+						log.Err(err).Msg("error while adding new user to tx")
+						return
+					}
+				} else {
+					_ = s.InteractionRespond(i.Interaction, b.newSimpleInteraction("internal error", int(discordgo.InteractionResponseChannelMessageWithSource)))
+					log.Err(err).Msg("error while checking if user exists.")
+					return
 				}
-				log.Err(err).Msg("error while checking if user exists.")
+			}
+
+			videos, err := fetchVideos(options[0].StringValue())
+			if err != nil {
+				log.Err(err).Msg("error while initializing a transaction on add-playlist command.") //
+				if strings.HasPrefix(err.Error(), "The playlist identified") {
+					_ = s.InteractionRespond(i.Interaction, b.newSimpleInteraction("playlist not found.", int(discordgo.InteractionResponseChannelMessageWithSource)))
+					return
+				}
+				_ = s.InteractionRespond(i.Interaction, b.newSimpleInteraction("internal error", int(discordgo.InteractionResponseChannelMessageWithSource)))
 				return
 			}
 
-			videos := fetchVideos(options[0].StringValue())
-
-			b.DB.NewInsert().Model()
-
+			tx.NewInsert().Model(&Playlist{ID: options[0].StringValue(), Title: options[1].StringValue(), Description: options[2].StringValue(), Updated_at: &now, Created_at: &now}).Exec(ctx)
 			if err != nil {
-				log.Err(err).Msg("error while reacting to define-start-channel command")
+				_ = s.InteractionRespond(i.Interaction, b.newSimpleInteraction("internal error", int(discordgo.InteractionResponseChannelMessageWithSource)))
+				log.Err(err).Msg("error while inserting playlist to tx")
+				return
 			}
 
-			err = s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
-				Type: discordgo.InteractionResponseChannelMessageWithSource,
-				Data: &discordgo.InteractionResponseData{
-					Content: "playlist added successfully.",
-					Flags:   64,
-				},
-			})
+			tx.NewInsert().Model(videos).Exec(ctx)
 			if err != nil {
-				log.Err(err).Msg("error while reacting to define-start-channel command")
+				_ = s.InteractionRespond(i.Interaction, b.newSimpleInteraction("internal error", int(discordgo.InteractionResponseChannelMessageWithSource)))
+				log.Err(err).Msg("error while inserting videos to tx")
+				return
 			}
 
+			var junctionTable []PlaylistVideo
+			for _, v := range *videos {
+				junctionTable = append(junctionTable, PlaylistVideo{video: v.ID, playlist: options[0].StringValue()})
+			}
+
+			tx.NewInsert().Model(&junctionTable).Exec(ctx)
+			if err != nil {
+				_ = s.InteractionRespond(i.Interaction, b.newSimpleInteraction("internal error", int(discordgo.InteractionResponseChannelMessageWithSource)))
+				log.Err(err).Msg("error while inserting playlist_video junction table to tx")
+				return
+			}
+
+			err = tx.Commit()
+			if err != nil {
+				_ = s.InteractionRespond(i.Interaction, b.newSimpleInteraction("internal error", int(discordgo.InteractionResponseChannelMessageWithSource)))
+				log.Err(err).Msg("error while committing tx")
+				return
+			}
+
+			_ = s.InteractionRespond(i.Interaction, b.newSimpleInteraction("playlist added successfully.", int(discordgo.InteractionResponseChannelMessageWithSource)))
 		},
 	}
 )

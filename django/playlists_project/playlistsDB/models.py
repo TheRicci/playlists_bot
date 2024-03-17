@@ -25,6 +25,7 @@ class playlist(models.Model):
     user = models.ForeignKey(user, blank=True, null=True)
     id = models.CharField(max_length=255,primary_key=True)
     title = models.CharField(max_length=255, blank=True, null=True)
+    thumbnail = models.CharField(max_length=255, blank=True, null=True)
     is_private = models.BooleanField(blank=True, null=True)
     description = models.CharField(max_length=255, blank=True, null=True) 
     created_at = models.DateTimeField(auto_now_add=True)
@@ -40,6 +41,7 @@ class playlist(models.Model):
 class video(models.Model):
     id = models.CharField(max_length=255,primary_key=True)
     title = models.CharField(max_length=255, blank=True, null=True)
+    thumbnail = models.CharField(max_length=255, blank=True, null=True)
     description = models.CharField(max_length=255, blank=True, null=True) 
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField()
