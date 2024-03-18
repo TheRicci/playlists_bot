@@ -62,9 +62,10 @@ func fetchVideos(playlistID string) (*[]Video, error) {
 		for _, item := range response.Items {
 			fmt.Println(item.Id, ": ", item.Snippet.Title)
 			videos = append(videos, Video{
-				ID:          item.Snippet.Title,
+				ID:          item.Snippet.PlaylistId,
 				Title:       item.Snippet.Title,
 				Description: item.Snippet.Description,
+				Thumbnail:   item.Snippet.Thumbnails.High.Url,
 				Updated_at:  &now,
 				Created_at:  &now,
 			})

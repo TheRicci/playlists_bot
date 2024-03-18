@@ -30,6 +30,7 @@ class playlist(models.Model):
     description = models.CharField(max_length=255, blank=True, null=True) 
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField()
+    last_refresh = models.DateTimeField(blank=True, null=True)
 
     def save(self, *args, **kwargs):
             self.updated_at = timezone.now()

@@ -30,8 +30,10 @@ type Playlist struct {
 	ID            string
 	Title         string
 	Description   string
+	Thumbnail     string
 	Updated_at    *time.Time
 	Created_at    *time.Time
+	Refreshed_at  *time.Time
 	bun.BaseModel `bun:"playlistsDB_playlist"`
 }
 
@@ -39,6 +41,7 @@ type Video struct {
 	ID            string
 	Title         string
 	Description   string
+	Thumbnail     string
 	Updated_at    *time.Time
 	Created_at    *time.Time
 	bun.BaseModel `bun:"playlistsDB_video"`
