@@ -21,19 +21,19 @@ var (
 			Options: []*discordgo.ApplicationCommandOption{
 				{
 					Type:        discordgo.ApplicationCommandOptionString,
-					Name:        "ID",
+					Name:        "id",
 					Description: "playlist string",
 					Required:    true,
 				},
 				{
 					Type:        discordgo.ApplicationCommandOptionString,
-					Name:        "Title",
+					Name:        "title",
 					Description: "playlist title",
 					Required:    true,
 				},
 				{
 					Type:        discordgo.ApplicationCommandOptionString,
-					Name:        "Description",
+					Name:        "description",
 					Description: "playlist description",
 					Required:    true,
 				},
@@ -47,7 +47,6 @@ var (
 				*/
 			},
 		},
-		{},
 		{
 			Name:        "show_playlists",
 			Description: "Command for adding a playlist",
@@ -62,7 +61,7 @@ var (
 		},
 		{
 			Name:        "search",
-			Description: "display playlists",
+			Description: "search a string in all playlists",
 			Options: []*discordgo.ApplicationCommandOption{
 				{
 					Type:        discordgo.ApplicationCommandOptionString,
@@ -80,7 +79,7 @@ var (
 		},
 		{
 			Name:        "search_in_playlist",
-			Description: "display playlists",
+			Description: "search a string in one specific playlist",
 			Options: []*discordgo.ApplicationCommandOption{
 				{
 					Type:        discordgo.ApplicationCommandOptionString,
@@ -90,7 +89,7 @@ var (
 				},
 				{
 					Type:        discordgo.ApplicationCommandOptionString,
-					Name:        "playlist id",
+					Name:        "playlist-id",
 					Description: "query an user's playlists",
 					Required:    true,
 				},
@@ -98,7 +97,7 @@ var (
 		},
 		{
 			Name:        "get_random",
-			Description: "display playlists",
+			Description: "get random video from all videos on registered playlists",
 			Options: []*discordgo.ApplicationCommandOption{
 				{
 					Type:        discordgo.ApplicationCommandOptionString,
@@ -116,7 +115,7 @@ var (
 		},
 		{
 			Name:        "random_from_playlist",
-			Description: "display playlists",
+			Description: "get a random video from a specific playlist",
 			Options: []*discordgo.ApplicationCommandOption{
 				{
 					Type:        discordgo.ApplicationCommandOptionString,
@@ -126,7 +125,7 @@ var (
 				},
 				{
 					Type:        discordgo.ApplicationCommandOptionString,
-					Name:        "playlist id",
+					Name:        "playlist-id",
 					Description: "query an user's playlists",
 					Required:    true,
 				},
@@ -134,11 +133,11 @@ var (
 		},
 		{
 			Name:        "refresh_playlist",
-			Description: "display playlists",
+			Description: "refresh a playlist",
 			Options: []*discordgo.ApplicationCommandOption{
 				{
 					Type:        discordgo.ApplicationCommandOptionString,
-					Name:        "playlist id",
+					Name:        "playlist-id",
 					Description: "query an user's playlists",
 					Required:    true,
 				},
@@ -164,13 +163,13 @@ var (
 				Options: []*discordgo.ApplicationCommandOption{
 					{
 						Type:        discordgo.ApplicationCommandOptionString,
-						Name:        "playlist id",
+						Name:        "playlist-id",
 						Description: "use channel id to add everything",
 						Required:    true,
 					},
 					{
 						Type:        discordgo.ApplicationCommandOptionString,
-						Name:        "playlist id",
+						Name:        "playlist-id",
 						Description: "use channel id to add everything",
 						Required:    true,
 					},
@@ -407,18 +406,12 @@ var (
 )
 
 func (b *Bot) interactionHandler(s *discordgo.Session, i *discordgo.InteractionCreate) {
-	mC, ok := i.Interaction.Data.(discordgo.MessageComponentInteractionData)
+	_, ok := i.Interaction.Data.(discordgo.MessageComponentInteractionData)
 	if !ok {
 		if h, ok := commandHandlers[i.ApplicationCommandData().Name]; ok {
 			h(s, i, b)
 		}
 		return
-	}
-	switch strings.Split(mC.CustomID, "_")[0] {
-	case "start":
-
-	case "new-address":
-
 	}
 }
 

@@ -3,11 +3,12 @@ package main
 import (
 	"context"
 	"fmt"
-	"log"
 	"os"
 	"os/signal"
 	"syscall"
 	"time"
+
+	"github.com/rs/zerolog/log"
 
 	"github.com/bwmarrin/discordgo"
 	"github.com/joho/godotenv"
@@ -23,7 +24,7 @@ type Bot struct {
 func newBot() Bot {
 	dg, err := discordgo.New("Bot " + os.Getenv("DISCORD_TOKEN"))
 	if err != nil {
-		log.Fatalf("error while instantiating Discord bot : %s ", err.Error())
+		log.Fatal().Msgf("error while instantiating Discord bot : %s ", err.Error())
 	}
 
 	return Bot{
@@ -46,13 +47,13 @@ func fetchVideos(playlistID string) (*[]Video, error) {
 	ctx := context.Background()
 	youtubeService, err := youtube.NewService(ctx, option.WithAPIKey(os.Getenv("YOUTUBE_KEY")))
 	if err != nil {
-		log.Fatalf("Error creating YouTube client: %v", err)
+		log.Fatal().Msgf("Error creating YouTube client: %v", err)
 	}
 
 	var videos []Video
 	pageToken := ""
 	now := time.Now()
-	for true {
+	for {
 		response, err := playlistVideos(youtubeService, "snippet", playlistID, pageToken)
 
 		if err != nil {
@@ -84,20 +85,40 @@ func fetchVideos(playlistID string) (*[]Video, error) {
 func main() {
 	err := godotenv.Load(".env")
 	if err != nil {
-		log.Fatalf("Error loading .env file")
+		log.Fatal().Msgf("Error loading .env file")
 	}
-	//fetchVideos()
 
 	bot := newBot()
 	err = bot.Open()
 	if err != nil {
-		log.Fatalf("error while opening connection with Discord : %s ", err.Error())
+		log.Fatal().Msgf("error while opening connection with Discord : %s ", err.Error())
 	}
+
+	log.Info().Msg("Adding commands...")
+	registeredCommands := make([]*discordgo.ApplicationCommand, len(commands))
+	for i, v := range commands {
+		cmd, err := bot.ApplicationCommandCreate(bot.State.User.ID, "", v)
+		if err != nil {
+			log.Panic().Msgf("Cannot create '%v' command: %v", v.Name, err)
+		}
+		registeredCommands[i] = cmd
+	}
+
+	bot.AddHandler(bot.interactionHandler)
 
 	fmt.Println("Bot is now running. Press CTRL-C to exit.")
 	sc := make(chan os.Signal, 1)
 	signal.Notify(sc, syscall.SIGINT, syscall.SIGTERM, os.Interrupt, os.Kill)
 	<-sc
-	_ = bot.Close()
 
+	log.Info().Msg("Removing commands...")
+	for _, v := range registeredCommands {
+		err := bot.ApplicationCommandDelete(bot.State.User.ID, "", v.ID)
+		if err != nil {
+			log.Fatal().Err(err).Msgf("Cannot delete '%v' command: %v", v.Name, err)
+		}
+	}
+
+	_ = bot.Close()
+	log.Info().Msg("Bot exiting")
 }
