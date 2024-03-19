@@ -48,6 +48,18 @@ var (
 			},
 		},
 		{
+			Name:        "remove_playlist",
+			Description: "Command for removing a playlist",
+			Options: []*discordgo.ApplicationCommandOption{
+				{
+					Type:        discordgo.ApplicationCommandOptionString,
+					Name:        "id",
+					Description: "playlist string",
+					Required:    true,
+				},
+			},
+		},
+		{
 			Name:        "show_playlists",
 			Description: "Command for adding a playlist",
 			Options: []*discordgo.ApplicationCommandOption{
@@ -265,6 +277,27 @@ var (
 			}
 
 			_ = s.InteractionRespond(i.Interaction, b.newSimpleInteraction("playlist added successfully.", int(discordgo.InteractionResponseChannelMessageWithSource)))
+		},
+		"remove_playlist": func(s *discordgo.Session, i *discordgo.InteractionCreate, b *Bot) {
+			ctx := context.Background()
+			options := i.ApplicationCommandData().Options
+
+			var playlists []Playlist
+			err := b.DB.NewSelect().Model(&playlists).Where("user = ? AND id = ?", i.Member.User.ID, options[0].StringValue()).Scan(ctx)
+			if err != nil {
+				_ = s.InteractionRespond(i.Interaction, b.newSimpleInteraction("user has no playlists registered.", int(discordgo.InteractionResponseChannelMessageWithSource)))
+				return
+			}
+
+			_, err = b.DB.NewDelete().Model(&playlists).Exec(ctx)
+			if err != nil {
+				_ = s.InteractionRespond(i.Interaction, b.newSimpleInteraction("internal error", int(discordgo.InteractionResponseChannelMessageWithSource)))
+				log.Err(err).Msgf("[remove_playlist] error while deleting playlistis")
+				return
+			}
+
+			_ = s.InteractionRespond(i.Interaction, b.newSimpleInteraction("Playlist was deleted succesfully", int(discordgo.InteractionResponseChannelMessageWithSource)))
+
 		},
 		"show_playlists": func(s *discordgo.Session, i *discordgo.InteractionCreate, b *Bot) {
 			ctx := context.Background()
