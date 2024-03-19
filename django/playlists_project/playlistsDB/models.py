@@ -7,6 +7,7 @@ class django_user(AbstractUser):
 
     class Meta:
         verbose_name_plural = "Django Users"
+        
 class user(models.Model):
     id = models.CharField(max_length=255,primary_key=True)
     name = models.CharField(max_length=255, blank=True, null=True)
@@ -22,12 +23,12 @@ class user(models.Model):
 
 
 class playlist(models.Model):
-    user = models.ForeignKey(user, blank=True, null=True)
+    user = models.ForeignKey(user, blank=True, null=True, on_delete=models.CASCADE)
     id = models.CharField(max_length=255,primary_key=True)
     title = models.CharField(max_length=255, blank=True, null=True)
+    description = models.CharField(max_length=255, blank=True, null=True) 
     thumbnail = models.CharField(max_length=255, blank=True, null=True)
     is_private = models.BooleanField(blank=True, null=True)
-    description = models.CharField(max_length=255, blank=True, null=True) 
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField()
     last_refresh = models.DateTimeField(blank=True, null=True)
@@ -42,8 +43,8 @@ class playlist(models.Model):
 class video(models.Model):
     id = models.CharField(max_length=255,primary_key=True)
     title = models.CharField(max_length=255, blank=True, null=True)
-    thumbnail = models.CharField(max_length=255, blank=True, null=True)
-    description = models.CharField(max_length=255, blank=True, null=True) 
+    description = models.CharField(max_length=255, blank=True, null=True)
+    thumbnail = models.CharField(max_length=255, blank=True, null=True) 
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField()
 
@@ -55,5 +56,5 @@ class video(models.Model):
         return f"{self.title}"
     
 class playlist_video(models.Model):
-        playlist = models.ForeignKey(playlist)
-        video = models.ForeignKey(video)
+        playlist = models.ForeignKey(playlist, on_delete=models.CASCADE)
+        video = models.ForeignKey(video, on_delete=models.CASCADE)
