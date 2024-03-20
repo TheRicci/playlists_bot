@@ -199,7 +199,7 @@ var (
 			ctx := context.Background()
 			now := time.Now()
 			options := i.ApplicationCommandData().Options
-			command := "add_playlist"
+			command, errorString := "add_playlist", "Internal error."
 
 			err := b.DB.NewSelect().Model(&Playlist{}).Where("id = ?", options[0].StringValue()).Scan(ctx)
 			if err == nil {
@@ -211,7 +211,7 @@ var (
 
 			tx, err := b.DB.BeginTx(context.Background(), &sql.TxOptions{})
 			if err != nil {
-				_ = s.InteractionRespond(i.Interaction, b.newSimpleInteraction("internal error", int(discordgo.InteractionResponseChannelMessageWithSource)))
+				_, _ = s.InteractionResponseEdit(i.Interaction, &discordgo.WebhookEdit{Content: &errorString})
 				log.Err(err).Msgf("[%s] error while initializing a transaction", command)
 				return
 			}
@@ -219,9 +219,9 @@ var (
 			err = b.DB.NewSelect().Model(&User{}).Where("id = ?", i.Member.User.ID).Scan(ctx)
 			if err != nil {
 				if err == sql.ErrNoRows {
-					_, err := tx.NewInsert().Model(&User{ID: i.Member.User.ID, Name: i.Member.Nick, Updated_at: &now, Created_at: &now}).Exec(ctx)
+					_, err := tx.NewInsert().Model(&User{ID: i.Member.User.ID, Name: i.Member.User.Username, Updated_at: &now, Created_at: &now}).Exec(ctx)
 					if err != nil {
-						_ = s.InteractionRespond(i.Interaction, b.newSimpleInteraction("internal error", int(discordgo.InteractionResponseChannelMessageWithSource)))
+						_, _ = s.InteractionResponseEdit(i.Interaction, &discordgo.WebhookEdit{Content: &errorString})
 						log.Err(err).Msgf("[%s] error while adding new user on tx", command)
 						return
 					}
@@ -239,44 +239,44 @@ var (
 					_ = s.InteractionRespond(i.Interaction, b.newSimpleInteraction("playlist not found.", int(discordgo.InteractionResponseChannelMessageWithSource)))
 					return
 				}
-				_ = s.InteractionRespond(i.Interaction, b.newSimpleInteraction("internal error", int(discordgo.InteractionResponseChannelMessageWithSource)))
+				_, _ = s.InteractionResponseEdit(i.Interaction, &discordgo.WebhookEdit{Content: &errorString})
 				return
 			}
 
-			tx.NewInsert().Model(&Playlist{ID: options[0].StringValue(), Title: options[1].StringValue(), Description: options[2].StringValue(), Thumbnail: (*videos)[0].Thumbnail, Updated_at: &now, Created_at: &now}).Exec(ctx)
+			_, err = tx.NewInsert().Model(&Playlist{ID: options[0].StringValue(), Title: options[1].StringValue(), Description: options[2].StringValue(), Thumbnail: (*videos)[0].Thumbnail, Updated_at: &now, Created_at: &now}).Exec(ctx)
 			if err != nil {
-				_ = s.InteractionRespond(i.Interaction, b.newSimpleInteraction("internal error", int(discordgo.InteractionResponseChannelMessageWithSource)))
+				_, _ = s.InteractionResponseEdit(i.Interaction, &discordgo.WebhookEdit{Content: &errorString})
 				log.Err(err).Msgf("[%s] error while inserting playlist on tx", command)
 				return
 			}
 
-			tx.NewInsert().Model(videos).Exec(ctx)
+			_, err = tx.NewInsert().Model(videos).Exec(ctx)
 			if err != nil {
-				_ = s.InteractionRespond(i.Interaction, b.newSimpleInteraction("internal error", int(discordgo.InteractionResponseChannelMessageWithSource)))
+				_, _ = s.InteractionResponseEdit(i.Interaction, &discordgo.WebhookEdit{Content: &errorString})
 				log.Err(err).Msgf("[%s] error while inserting videos on tx", command)
 				return
 			}
 
 			var junctionTable []PlaylistVideo
 			for _, v := range *videos {
-				junctionTable = append(junctionTable, PlaylistVideo{video: v.ID, playlist: options[0].StringValue()})
+				junctionTable = append(junctionTable, PlaylistVideo{Video_id: v.ID, Playlist_id: options[0].StringValue()})
 			}
 
-			tx.NewInsert().Model(&junctionTable).Exec(ctx)
+			_, err = tx.NewInsert().Model(&junctionTable).Exec(ctx)
 			if err != nil {
-				_ = s.InteractionRespond(i.Interaction, b.newSimpleInteraction("internal error", int(discordgo.InteractionResponseChannelMessageWithSource)))
+				_, _ = s.InteractionResponseEdit(i.Interaction, &discordgo.WebhookEdit{Content: &errorString})
 				log.Err(err).Msgf("[%s] error while inserting playlist_video junction table to tx", command)
 				return
 			}
 
 			err = tx.Commit()
 			if err != nil {
-				_ = s.InteractionRespond(i.Interaction, b.newSimpleInteraction("internal error", int(discordgo.InteractionResponseChannelMessageWithSource)))
+				_, _ = s.InteractionResponseEdit(i.Interaction, &discordgo.WebhookEdit{Content: &errorString})
 				log.Err(err).Msgf("[%s] error while committing tx", command)
 				return
 			}
-
-			_ = s.InteractionRespond(i.Interaction, b.newSimpleInteraction("playlist added successfully.", int(discordgo.InteractionResponseChannelMessageWithSource)))
+			ok := "playlist added successfully."
+			_, _ = s.InteractionResponseEdit(i.Interaction, &discordgo.WebhookEdit{Content: &ok})
 		},
 		"remove_playlist": func(s *discordgo.Session, i *discordgo.InteractionCreate, b *Bot) {
 			ctx := context.Background()
@@ -289,7 +289,7 @@ var (
 				return
 			}
 
-			_, err = b.DB.NewDelete().Model(&playlists).Exec(ctx)
+			_, err = b.DB.NewDelete().Model(&playlists).WherePK().Exec(ctx)
 			if err != nil {
 				_ = s.InteractionRespond(i.Interaction, b.newSimpleInteraction("internal error", int(discordgo.InteractionResponseChannelMessageWithSource)))
 				log.Err(err).Msgf("[remove_playlist] error while deleting playlistis")
@@ -303,7 +303,7 @@ var (
 			ctx := context.Background()
 			options := i.ApplicationCommandData().Options
 			user := i.Member.User.ID
-			if options[0].StringValue() != "" {
+			if len(options) != 0 {
 				user = options[0].StringValue()
 			}
 
@@ -341,7 +341,7 @@ var (
 				}
 			}
 
-			if (*playlist.Refreshed_at).Add(time.Hour * 24).After(time.Now()) {
+			if (*playlist.Last_refresh).Add(time.Hour * 24).After(time.Now()) {
 				_ = s.InteractionRespond(i.Interaction, b.newSimpleInteraction("you can refresh a playlist only once a day.", int(discordgo.InteractionResponseChannelMessageWithSource)))
 				return
 			}
@@ -367,7 +367,7 @@ var (
 
 			videosSET := make(map[string]struct{})
 			for _, j := range junctionTable {
-				videosSET[j.video] = struct{}{}
+				videosSET[j.Video_id] = struct{}{}
 			}
 
 			var videosToADD []Video
@@ -377,7 +377,7 @@ var (
 					delete(videosSET, v.ID) //remove the ones that are already on the table so i can delete the rest
 				} else {
 					videosToADD = append(videosToADD, v)
-					junctionTableToADD = append(junctionTableToADD, PlaylistVideo{video: v.ID, playlist: options[0].StringValue()})
+					junctionTableToADD = append(junctionTableToADD, PlaylistVideo{Video_id: v.ID, Playlist_id: options[0].StringValue()})
 				}
 			}
 
@@ -404,7 +404,7 @@ var (
 
 			var junctionTableToRemove []PlaylistVideo
 			for k := range videosSET {
-				junctionTable = append(junctionTable, PlaylistVideo{video: k, playlist: options[0].StringValue()})
+				junctionTable = append(junctionTable, PlaylistVideo{Video_id: k, Playlist_id: options[0].StringValue()})
 			}
 
 			_, err = tx.NewDelete().Model(&junctionTableToRemove).Exec(ctx)

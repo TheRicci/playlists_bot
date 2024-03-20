@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -53,20 +54,37 @@ func fetchVideos(playlistID string) (*[]Video, error) {
 	var videos []Video
 	pageToken := ""
 	now := time.Now()
+	m := make(map[string]struct{})
 	for {
 		response, err := playlistVideos(youtubeService, "snippet", playlistID, pageToken)
-
 		if err != nil {
 			return nil, err
 		}
 
 		for _, item := range response.Items {
-			fmt.Println(item.Id, ": ", item.Snippet.Title)
+			if item.Snippet.Title == "Private video" || item.Snippet.Title == "Deleted video" {
+				continue
+			}
+			if _, ok := m[item.Snippet.ResourceId.VideoId]; ok {
+				continue
+			} else {
+				m[item.Snippet.ResourceId.VideoId] = struct{}{}
+			}
+
+			var description string
+			index := strings.Index(item.Snippet.Description, ".")
+			if index != -1 {
+				description = item.Snippet.Description[:index]
+			} else if len(item.Snippet.Description) > 255 {
+				description = item.Snippet.Description[:255]
+			}
+
+			fmt.Println(item.Snippet.ResourceId.VideoId, ": ", item.Snippet.Title)
 			videos = append(videos, Video{
-				ID:          item.Snippet.PlaylistId,
+				ID:          item.Snippet.ResourceId.VideoId,
 				Title:       item.Snippet.Title,
-				Description: item.Snippet.Description,
-				Thumbnail:   item.Snippet.Thumbnails.High.Url,
+				Description: description,
+				Thumbnail:   item.Snippet.Thumbnails.Medium.Url,
 				Updated_at:  &now,
 				Created_at:  &now,
 			})
