@@ -220,7 +220,7 @@ var (
 			err = b.DB.NewSelect().Model(&User{}).Where("id = ?", i.Member.User.ID).Scan(ctx)
 			if err != nil {
 				if err == sql.ErrNoRows {
-					_, err := tx.NewInsert().Model(&User{ID: i.Member.User.ID, Name: i.Member.User.Username, Avatar: i.Member.User.AvatarURL(""), Updated_at: &now, Created_at: &now}).Exec(ctx)
+					_, err := tx.NewInsert().Model(&User{ID: i.Member.User.ID, Name: i.Member.User.Username, Updated_at: &now, Created_at: &now}).Exec(ctx)
 					if err != nil {
 						_, _ = s.InteractionResponseEdit(i.Interaction, &discordgo.WebhookEdit{Content: &errorString})
 						log.Err(err).Msgf("[%s] error while adding new user on tx", command)
@@ -309,7 +309,7 @@ var (
 			}
 
 			var playlists []Playlist
-			err := b.DB.NewSelect().Model(&playlists).Where("user = ?", user.ID).Scan(ctx)
+			err := b.DB.NewSelect().Model(&playlists).Where("user_id = ?", user.ID).Scan(ctx)
 			if err != nil {
 				_ = s.InteractionRespond(i.Interaction, b.newSimpleInteraction("user has no playlists registered.", int(discordgo.InteractionResponseChannelMessageWithSource), 64))
 				return
@@ -317,7 +317,7 @@ var (
 
 			var fields []*discordgo.MessageEmbedField
 			for i, p := range playlists {
-				fields = append(fields, &discordgo.MessageEmbedField{Name: fmt.Sprintf("#%v %s", i, p.Title), Value: fmt.Sprintf("https://www.youtube.com/playlist?list=%s", p.ID)})
+				fields = append(fields, &discordgo.MessageEmbedField{Name: fmt.Sprintf("#%v %s", i+1, p.Title), Value: fmt.Sprintf("https://www.youtube.com/playlist?list=%s", p.ID)})
 			}
 
 			var embed []*discordgo.MessageEmbed
@@ -448,7 +448,11 @@ var (
 			_ = s.InteractionRespond(i.Interaction, b.newSimpleInteraction("playlist refreshed successfully.", int(discordgo.InteractionResponseChannelMessageWithSource), 64))
 
 			go func() {
-
+				//deleting videos with no playlists
+				_, err := b.DB.NewDelete().NewRaw("DELETE FROM video WHERE id NOT IN (SELECT DISTINCT video_id FROM playlist_video);").Exec()
+				if err != nil {
+					log.Err(err).Msgf("error while deleting dangling videos", command)
+				}
 			}()
 
 		},
