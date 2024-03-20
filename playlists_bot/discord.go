@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"time"
 
@@ -203,11 +204,11 @@ var (
 
 			err := b.DB.NewSelect().Model(&Playlist{}).Where("id = ?", options[0].StringValue()).Scan(ctx)
 			if err == nil {
-				_ = s.InteractionRespond(i.Interaction, b.newSimpleInteraction("playlist already added.", int(discordgo.InteractionResponseChannelMessageWithSource)))
+				_ = s.InteractionRespond(i.Interaction, b.newSimpleInteraction("playlist already added.", int(discordgo.InteractionResponseChannelMessageWithSource), 64))
 				return
 			}
 
-			_ = s.InteractionRespond(i.Interaction, b.newSimpleInteraction("fetching videos from playlist..", int(discordgo.InteractionResponseChannelMessageWithSource)))
+			_ = s.InteractionRespond(i.Interaction, b.newSimpleInteraction("fetching videos from playlist..", int(discordgo.InteractionResponseChannelMessageWithSource), 64))
 
 			tx, err := b.DB.BeginTx(context.Background(), &sql.TxOptions{})
 			if err != nil {
@@ -219,14 +220,14 @@ var (
 			err = b.DB.NewSelect().Model(&User{}).Where("id = ?", i.Member.User.ID).Scan(ctx)
 			if err != nil {
 				if err == sql.ErrNoRows {
-					_, err := tx.NewInsert().Model(&User{ID: i.Member.User.ID, Name: i.Member.User.Username, Updated_at: &now, Created_at: &now}).Exec(ctx)
+					_, err := tx.NewInsert().Model(&User{ID: i.Member.User.ID, Name: i.Member.User.Username, Avatar: i.Member.User.AvatarURL(""), Updated_at: &now, Created_at: &now}).Exec(ctx)
 					if err != nil {
 						_, _ = s.InteractionResponseEdit(i.Interaction, &discordgo.WebhookEdit{Content: &errorString})
 						log.Err(err).Msgf("[%s] error while adding new user on tx", command)
 						return
 					}
 				} else {
-					_ = s.InteractionRespond(i.Interaction, b.newSimpleInteraction("internal error", int(discordgo.InteractionResponseChannelMessageWithSource)))
+					_ = s.InteractionRespond(i.Interaction, b.newSimpleInteraction("internal error", int(discordgo.InteractionResponseChannelMessageWithSource), 64))
 					log.Err(err).Msgf("[%s] error while checking if user exists.", command)
 					return
 				}
@@ -236,14 +237,14 @@ var (
 			if err != nil {
 				log.Err(err).Msg("[%s] error while fetching videos from youtube") //
 				if strings.HasPrefix(err.Error(), "The playlist identified") {
-					_ = s.InteractionRespond(i.Interaction, b.newSimpleInteraction("playlist not found.", int(discordgo.InteractionResponseChannelMessageWithSource)))
+					_ = s.InteractionRespond(i.Interaction, b.newSimpleInteraction("playlist not found.", int(discordgo.InteractionResponseChannelMessageWithSource), 64))
 					return
 				}
 				_, _ = s.InteractionResponseEdit(i.Interaction, &discordgo.WebhookEdit{Content: &errorString})
 				return
 			}
 
-			_, err = tx.NewInsert().Model(&Playlist{ID: options[0].StringValue(), Title: options[1].StringValue(), Description: options[2].StringValue(), Thumbnail: (*videos)[0].Thumbnail, Updated_at: &now, Created_at: &now}).Exec(ctx)
+			_, err = tx.NewInsert().Model(&Playlist{ID: options[0].StringValue(), User_id: i.Member.User.ID, Title: options[1].StringValue(), Description: options[2].StringValue(), Thumbnail: (*videos)[0].Thumbnail, Updated_at: &now, Created_at: &now}).Exec(ctx)
 			if err != nil {
 				_, _ = s.InteractionResponseEdit(i.Interaction, &discordgo.WebhookEdit{Content: &errorString})
 				log.Err(err).Msgf("[%s] error while inserting playlist on tx", command)
@@ -285,36 +286,52 @@ var (
 			var playlists []Playlist
 			err := b.DB.NewSelect().Model(&playlists).Where("user = ? AND id = ?", i.Member.User.ID, options[0].StringValue()).Scan(ctx)
 			if err != nil {
-				_ = s.InteractionRespond(i.Interaction, b.newSimpleInteraction("user has no playlists registered.", int(discordgo.InteractionResponseChannelMessageWithSource)))
+				_ = s.InteractionRespond(i.Interaction, b.newSimpleInteraction("user has no playlists registered.", int(discordgo.InteractionResponseChannelMessageWithSource), 64))
 				return
 			}
 
 			_, err = b.DB.NewDelete().Model(&playlists).WherePK().Exec(ctx)
 			if err != nil {
-				_ = s.InteractionRespond(i.Interaction, b.newSimpleInteraction("internal error", int(discordgo.InteractionResponseChannelMessageWithSource)))
+				_ = s.InteractionRespond(i.Interaction, b.newSimpleInteraction("internal error", int(discordgo.InteractionResponseChannelMessageWithSource), 64))
 				log.Err(err).Msgf("[remove_playlist] error while deleting playlistis")
 				return
 			}
 
-			_ = s.InteractionRespond(i.Interaction, b.newSimpleInteraction("Playlist was deleted succesfully", int(discordgo.InteractionResponseChannelMessageWithSource)))
+			_ = s.InteractionRespond(i.Interaction, b.newSimpleInteraction("Playlist was deleted succesfully", int(discordgo.InteractionResponseChannelMessageWithSource), 64))
 
 		},
 		"show_playlists": func(s *discordgo.Session, i *discordgo.InteractionCreate, b *Bot) {
 			ctx := context.Background()
 			options := i.ApplicationCommandData().Options
-			user := i.Member.User.ID
+			user := i.Member.User
 			if len(options) != 0 {
-				user = options[0].StringValue()
+				user, _ = s.User(options[0].StringValue())
 			}
 
 			var playlists []Playlist
-			err := b.DB.NewSelect().Model(&playlists).Where("user = ?", user).Scan(ctx)
+			err := b.DB.NewSelect().Model(&playlists).Where("user = ?", user.ID).Scan(ctx)
 			if err != nil {
-				_ = s.InteractionRespond(i.Interaction, b.newSimpleInteraction("user has no playlists registered.", int(discordgo.InteractionResponseChannelMessageWithSource)))
+				_ = s.InteractionRespond(i.Interaction, b.newSimpleInteraction("user has no playlists registered.", int(discordgo.InteractionResponseChannelMessageWithSource), 64))
 				return
 			}
 
-			//
+			var fields []*discordgo.MessageEmbedField
+			for i, p := range playlists {
+				fields = append(fields, &discordgo.MessageEmbedField{Name: fmt.Sprintf("#%v %s", i, p.Title), Value: fmt.Sprintf("https://www.youtube.com/playlist?list=%s", p.ID)})
+			}
+
+			var embed []*discordgo.MessageEmbed
+			_ = s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+				Type: discordgo.InteractionResponseChannelMessageWithSource,
+				Data: &discordgo.InteractionResponseData{
+					Flags: discordgo.MessageFlags(8),
+					Embeds: append(embed, &discordgo.MessageEmbed{
+						Title:     fmt.Sprintf("%s's Playlists", strings.Title(strings.ToLower(user.Username))),
+						Thumbnail: &discordgo.MessageEmbedThumbnail{URL: user.AvatarURL("")},
+						Fields:    fields,
+					}),
+				},
+			})
 
 		},
 		"refresh_playlist": func(s *discordgo.Session, i *discordgo.InteractionCreate, b *Bot) {
@@ -332,17 +349,17 @@ var (
 			err := b.DB.NewSelect().Model(&playlist).Where("id = ? AND user = ?", options[0].StringValue(), i.Member.User.ID).Scan(ctx)
 			if err != nil {
 				if err == sql.ErrNoRows {
-					_ = s.InteractionRespond(i.Interaction, b.newSimpleInteraction("playlist not found.", int(discordgo.InteractionResponseChannelMessageWithSource)))
+					_ = s.InteractionRespond(i.Interaction, b.newSimpleInteraction("playlist not found.", int(discordgo.InteractionResponseChannelMessageWithSource), 64))
 					return
 				} else {
-					_ = s.InteractionRespond(i.Interaction, b.newSimpleInteraction("internal error", int(discordgo.InteractionResponseChannelMessageWithSource)))
+					_ = s.InteractionRespond(i.Interaction, b.newSimpleInteraction("internal error", int(discordgo.InteractionResponseChannelMessageWithSource), 64))
 					log.Err(err).Msgf("[%s] error while checking if playlist exists.", command)
 					return
 				}
 			}
 
 			if (*playlist.Last_refresh).Add(time.Hour * 24).After(time.Now()) {
-				_ = s.InteractionRespond(i.Interaction, b.newSimpleInteraction("you can refresh a playlist only once a day.", int(discordgo.InteractionResponseChannelMessageWithSource)))
+				_ = s.InteractionRespond(i.Interaction, b.newSimpleInteraction("you can refresh a playlist only once a day.", int(discordgo.InteractionResponseChannelMessageWithSource), 64))
 				return
 			}
 
@@ -350,17 +367,17 @@ var (
 			if err != nil {
 				log.Err(err).Msgf("[%s] error while fetching videos from youtube", command) //
 				if strings.HasPrefix(err.Error(), "The playlist identified") {
-					_ = s.InteractionRespond(i.Interaction, b.newSimpleInteraction("playlist not found.", int(discordgo.InteractionResponseChannelMessageWithSource)))
+					_ = s.InteractionRespond(i.Interaction, b.newSimpleInteraction("playlist not found.", int(discordgo.InteractionResponseChannelMessageWithSource), 64))
 					return
 				}
-				_ = s.InteractionRespond(i.Interaction, b.newSimpleInteraction("internal error", int(discordgo.InteractionResponseChannelMessageWithSource)))
+				_ = s.InteractionRespond(i.Interaction, b.newSimpleInteraction("internal error", int(discordgo.InteractionResponseChannelMessageWithSource), 64))
 				return
 			}
 
 			var junctionTable []PlaylistVideo
 			err = b.DB.NewSelect().Model(&junctionTable).Where("id = ?", options[0].StringValue(), i.Member.User.ID).Scan(ctx)
 			if err != nil {
-				_ = s.InteractionRespond(i.Interaction, b.newSimpleInteraction("internal error", int(discordgo.InteractionResponseChannelMessageWithSource)))
+				_ = s.InteractionRespond(i.Interaction, b.newSimpleInteraction("internal error", int(discordgo.InteractionResponseChannelMessageWithSource), 64))
 				log.Err(err).Msgf("[%s] error while requesting junction table entries", command)
 				return
 			}
@@ -383,21 +400,21 @@ var (
 
 			tx, err := b.DB.BeginTx(context.Background(), &sql.TxOptions{})
 			if err != nil {
-				_ = s.InteractionRespond(i.Interaction, b.newSimpleInteraction("internal error", int(discordgo.InteractionResponseChannelMessageWithSource)))
+				_ = s.InteractionRespond(i.Interaction, b.newSimpleInteraction("internal error", int(discordgo.InteractionResponseChannelMessageWithSource), 64))
 				log.Err(err).Msgf("[%s] error while initializing a transaction on refresh_playlist command.", command)
 				return
 			}
 
 			_, err = tx.NewInsert().Model(&videosToADD).On("CONFLICT (id) DO UPDATE").Exec(ctx)
 			if err != nil {
-				_ = s.InteractionRespond(i.Interaction, b.newSimpleInteraction("internal error", int(discordgo.InteractionResponseChannelMessageWithSource)))
+				_ = s.InteractionRespond(i.Interaction, b.newSimpleInteraction("internal error", int(discordgo.InteractionResponseChannelMessageWithSource), 64))
 				log.Err(err).Msgf("[%s] error while inserting videos on tx", command)
 				return
 			}
 
 			_, err = tx.NewInsert().Model(&junctionTableToADD).Exec(ctx)
 			if err != nil {
-				_ = s.InteractionRespond(i.Interaction, b.newSimpleInteraction("internal error", int(discordgo.InteractionResponseChannelMessageWithSource)))
+				_ = s.InteractionRespond(i.Interaction, b.newSimpleInteraction("internal error", int(discordgo.InteractionResponseChannelMessageWithSource), 64))
 				log.Err(err).Msgf("[%s] error while inserting junction table on tx", command)
 				return
 			}
@@ -409,26 +426,26 @@ var (
 
 			_, err = tx.NewDelete().Model(&junctionTableToRemove).Exec(ctx)
 			if err != nil {
-				_ = s.InteractionRespond(i.Interaction, b.newSimpleInteraction("internal error", int(discordgo.InteractionResponseChannelMessageWithSource)))
+				_ = s.InteractionRespond(i.Interaction, b.newSimpleInteraction("internal error", int(discordgo.InteractionResponseChannelMessageWithSource), 64))
 				log.Err(err).Msgf("[%s] error while removing junction table on tx", command)
 				return
 			}
 
 			_, err = tx.NewUpdate().Model((*Playlist)(nil)).Where("id=?", options[0].StringValue()).Set("last_refresh=?", time.Now()).Exec(ctx)
 			if err != nil {
-				_ = s.InteractionRespond(i.Interaction, b.newSimpleInteraction("internal error", int(discordgo.InteractionResponseChannelMessageWithSource)))
+				_ = s.InteractionRespond(i.Interaction, b.newSimpleInteraction("internal error", int(discordgo.InteractionResponseChannelMessageWithSource), 64))
 				log.Err(err).Msgf("[%s] error while inserting junction table on tx", command)
 				return
 			}
 
 			err = tx.Commit()
 			if err != nil {
-				_ = s.InteractionRespond(i.Interaction, b.newSimpleInteraction("internal error", int(discordgo.InteractionResponseChannelMessageWithSource)))
+				_ = s.InteractionRespond(i.Interaction, b.newSimpleInteraction("internal error", int(discordgo.InteractionResponseChannelMessageWithSource), 64))
 				log.Err(err).Msgf("[%s] error while committing tx", command)
 				return
 			}
 
-			_ = s.InteractionRespond(i.Interaction, b.newSimpleInteraction("playlist refreshed successfully.", int(discordgo.InteractionResponseChannelMessageWithSource)))
+			_ = s.InteractionRespond(i.Interaction, b.newSimpleInteraction("playlist refreshed successfully.", int(discordgo.InteractionResponseChannelMessageWithSource), 64))
 
 			go func() {
 
@@ -467,12 +484,12 @@ func (b *Bot) newEmbededInteraction(title, footer, content string, mC []discordg
 	}
 }
 
-func (b *Bot) newSimpleInteraction(content string, respType int) *discordgo.InteractionResponse {
+func (b *Bot) newSimpleInteraction(content string, respType int, flags int) *discordgo.InteractionResponse {
 	return &discordgo.InteractionResponse{
 		Type: discordgo.InteractionResponseType(respType),
 		Data: &discordgo.InteractionResponseData{
 			Content: content,
-			Flags:   64,
+			Flags:   discordgo.MessageFlags(flags),
 		},
 	}
 }

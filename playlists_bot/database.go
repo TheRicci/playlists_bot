@@ -28,6 +28,7 @@ type User struct {
 
 type Playlist struct {
 	ID            string
+	User_id       string
 	Title         string
 	Description   string
 	Thumbnail     string
