@@ -10,9 +10,18 @@ import (
 
 	"github.com/bwmarrin/discordgo"
 	"github.com/rs/zerolog/log"
+	"github.com/uptrace/bun"
 )
 
 type messageComponents []discordgo.MessageComponent
+
+type videoQuery struct {
+	ID            string
+	Title         string
+	Description   string
+	Thumbnail     string
+	bun.BaseModel `bun:"playlistsDB_playlist_video"`
+}
 
 var (
 	commands = []*discordgo.ApplicationCommand{
@@ -96,13 +105,13 @@ var (
 			Options: []*discordgo.ApplicationCommandOption{
 				{
 					Type:        discordgo.ApplicationCommandOptionString,
-					Name:        "string",
+					Name:        "playlist-id",
 					Description: "query an user's playlists",
 					Required:    true,
 				},
 				{
 					Type:        discordgo.ApplicationCommandOptionString,
-					Name:        "playlist-id",
+					Name:        "string",
 					Description: "query an user's playlists",
 					Required:    true,
 				},
@@ -276,6 +285,7 @@ var (
 				log.Err(err).Msgf("[%s] error while committing tx", command)
 				return
 			}
+
 			ok := "playlist added successfully."
 			_, _ = s.InteractionResponseEdit(i.Interaction, &discordgo.WebhookEdit{Content: &ok})
 		},
@@ -284,9 +294,9 @@ var (
 			options := i.ApplicationCommandData().Options
 
 			var playlists []Playlist
-			err := b.DB.NewSelect().Model(&playlists).Where("user = ? AND id = ?", i.Member.User.ID, options[0].StringValue()).Scan(ctx)
+			err := b.DB.NewSelect().Model(&playlists).Where("user_id = ? AND id = ?", i.Member.User.ID, options[0].StringValue()).Scan(ctx)
 			if err != nil {
-				_ = s.InteractionRespond(i.Interaction, b.newSimpleInteraction("user has no playlists registered.", int(discordgo.InteractionResponseChannelMessageWithSource), 64))
+				_ = s.InteractionRespond(i.Interaction, b.newSimpleInteraction("playlist not registered.", int(discordgo.InteractionResponseChannelMessageWithSource), 64))
 				return
 			}
 
@@ -334,7 +344,49 @@ var (
 			})
 
 		},
-		"refresh_playlist": func(s *discordgo.Session, i *discordgo.InteractionCreate, b *Bot) {
+		"search_in_playlist": func(s *discordgo.Session, i *discordgo.InteractionCreate, b *Bot) {
+			ctx := context.Background()
+			options := i.ApplicationCommandData().Options
+
+			var videoQuery []videoQuery
+			err := b.DB.NewSelect().Model(&videoQuery).
+				ColumnExpr("v.id").
+				ColumnExpr("v.title").
+				ColumnExpr("v.description").
+				Join("JOIN \"playlistsDB_video\" AS v ON v.id = video_query.video_id").
+				Where("video_query.playlist_id = ? AND LOWER(v.title) SIMILAR TO ?", options[0].StringValue(), "%( |^)"+strings.ToLower(options[1].StringValue())+"( |$)%").
+				Scan(ctx)
+			if err != nil {
+				if err == sql.ErrNoRows {
+					_ = s.InteractionRespond(i.Interaction, b.newSimpleInteraction("playlist not found.", int(discordgo.InteractionResponseChannelMessageWithSource), 64))
+					return
+				} else {
+					_ = s.InteractionRespond(i.Interaction, b.newSimpleInteraction("internal error", int(discordgo.InteractionResponseChannelMessageWithSource), 64))
+					log.Err(err).Msgf("[search_in_playlist] error while checking if playlist exists.")
+					return
+				}
+			}
+
+			var fields []*discordgo.MessageEmbedField
+			for _, v := range videoQuery {
+				fields = append(fields, &discordgo.MessageEmbedField{Name: v.Title, Value: fmt.Sprintf("https://www.youtube.com/watch?v=%s", v.ID)})
+			}
+
+			var embed []*discordgo.MessageEmbed
+			_ = s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+				Type: discordgo.InteractionResponseChannelMessageWithSource,
+				Data: &discordgo.InteractionResponseData{
+					Flags: discordgo.MessageFlags(8),
+					Embeds: append(embed, &discordgo.MessageEmbed{
+						Title: "test",
+						//Thumbnail: &discordgo.MessageEmbedThumbnail{URL: },
+						Fields: fields,
+					}),
+				},
+			})
+
+		},
+		"refresh_playlist": func(s *discordgo.Session, i *discordgo.InteractionCreate, b *Bot) { //TODO check if playlist is empty
 			//check if user has playlist
 			//get refreshed videos
 			//get current videos linked with playlist
@@ -346,7 +398,7 @@ var (
 			options := i.ApplicationCommandData().Options
 
 			var playlist Playlist
-			err := b.DB.NewSelect().Model(&playlist).Where("id = ? AND user = ?", options[0].StringValue(), i.Member.User.ID).Scan(ctx)
+			err := b.DB.NewSelect().Model(&playlist).Where("id = ? AND user_id = ?", options[0].StringValue(), i.Member.User.ID).Scan(ctx)
 			if err != nil {
 				if err == sql.ErrNoRows {
 					_ = s.InteractionRespond(i.Interaction, b.newSimpleInteraction("playlist not found.", int(discordgo.InteractionResponseChannelMessageWithSource), 64))
@@ -449,9 +501,9 @@ var (
 
 			go func() {
 				//deleting videos with no playlists
-				_, err := b.DB.NewDelete().NewRaw("DELETE FROM video WHERE id NOT IN (SELECT DISTINCT video_id FROM playlist_video);").Exec()
+				_, err := b.DB.NewDelete().NewRaw("DELETE FROM video WHERE id NOT IN (SELECT DISTINCT video_id FROM playlist_video);").Exec(ctx)
 				if err != nil {
-					log.Err(err).Msgf("error while deleting dangling videos", command)
+					log.Err(err).Msgf("[%s] error while deleting dangling videos", command)
 				}
 			}()
 
