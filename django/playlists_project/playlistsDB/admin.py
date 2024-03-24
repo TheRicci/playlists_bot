@@ -18,7 +18,7 @@ class PlaylistAdmin(admin.ModelAdmin):
 
 class VideoAdmin(admin.ModelAdmin):
     search_fields=['id','title',]
-    list_display=('id','title','description','thumbnail','created_at','updated_at')
+    list_display=('id','title','description','thumbnail','created_at','updated_at','channel_id','channel_title')
 
 class PlaylistVideoAdmin(admin.ModelAdmin):
     search_fields=['video','playlist']

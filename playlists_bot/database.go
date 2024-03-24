@@ -43,6 +43,8 @@ type Video struct {
 	Title         string
 	Description   string
 	Thumbnail     string
+	Channel_id    string
+	Channel_title string
 	Updated_at    *time.Time
 	Created_at    *time.Time
 	bun.BaseModel `bun:"playlistsDB_video"`

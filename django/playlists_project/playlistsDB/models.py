@@ -43,6 +43,8 @@ class playlist(models.Model):
 class video(models.Model):
     id = models.CharField(max_length=255,primary_key=True)
     title = models.CharField(max_length=255, blank=True, null=True)
+    channel_title = models.CharField(max_length=255, blank=True, null=True)
+    channel_id = models.CharField(max_length=255, blank=True, null=True)
     description = models.TextField(blank=True, null=True)
     thumbnail = models.CharField(max_length=255, blank=True, null=True) 
     created_at = models.DateTimeField(auto_now_add=True)
