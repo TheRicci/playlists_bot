@@ -20,6 +20,8 @@ type videoQuery struct {
 	Title         string
 	Description   string
 	Thumbnail     string
+	Channel_id    string
+	Channel_title string
 	bun.BaseModel `bun:"playlistsDB_playlist_video"`
 }
 
@@ -139,12 +141,6 @@ var (
 			Name:        "random_from_playlist",
 			Description: "get a random video from a specific playlist",
 			Options: []*discordgo.ApplicationCommandOption{
-				{
-					Type:        discordgo.ApplicationCommandOptionString,
-					Name:        "string",
-					Description: "query an user's playlists",
-					Required:    true,
-				},
 				{
 					Type:        discordgo.ApplicationCommandOptionString,
 					Name:        "playlist-id",
@@ -347,9 +343,23 @@ var (
 		"search_in_playlist": func(s *discordgo.Session, i *discordgo.InteractionCreate, b *Bot) {
 			ctx := context.Background()
 			options := i.ApplicationCommandData().Options
+			command := "search_in_playlist"
+
+			var playlist Playlist
+			err := b.DB.NewSelect().Model(&playlist).Where("id = ? AND user_id = ?", options[0].StringValue(), i.Member.User.ID).Scan(ctx)
+			if err != nil {
+				if err == sql.ErrNoRows {
+					_ = s.InteractionRespond(i.Interaction, b.newSimpleInteraction("playlist not found.", int(discordgo.InteractionResponseChannelMessageWithSource), 64))
+					return
+				} else {
+					_ = s.InteractionRespond(i.Interaction, b.newSimpleInteraction("internal error", int(discordgo.InteractionResponseChannelMessageWithSource), 64))
+					log.Err(err).Msgf("[%s] error while checking if playlist exists.", command)
+					return
+				}
+			}
 
 			var videoQuery []videoQuery
-			err := b.DB.NewSelect().Model(&videoQuery).
+			err = b.DB.NewSelect().Model(&videoQuery).
 				ColumnExpr("v.id").
 				ColumnExpr("v.title").
 				ColumnExpr("v.description").
@@ -357,33 +367,21 @@ var (
 				Where("video_query.playlist_id = ? AND LOWER(v.title) SIMILAR TO ?", options[0].StringValue(), "%( |^)"+strings.ToLower(options[1].StringValue())+"( |$)%").
 				Scan(ctx)
 			if err != nil {
-				if err == sql.ErrNoRows {
-					_ = s.InteractionRespond(i.Interaction, b.newSimpleInteraction("playlist not found.", int(discordgo.InteractionResponseChannelMessageWithSource), 64))
-					return
-				} else {
-					_ = s.InteractionRespond(i.Interaction, b.newSimpleInteraction("internal error", int(discordgo.InteractionResponseChannelMessageWithSource), 64))
-					log.Err(err).Msgf("[search_in_playlist] error while checking if playlist exists.")
-					return
-				}
+				_ = s.InteractionRespond(i.Interaction, b.newSimpleInteraction("internal error", int(discordgo.InteractionResponseChannelMessageWithSource), 64))
+				log.Err(err).Msgf("[%s] error while checking if playlist exists.", command)
+				return
 			}
 
-			var fields []*discordgo.MessageEmbedField
-			for _, v := range videoQuery {
-				fields = append(fields, &discordgo.MessageEmbedField{Name: v.Title, Value: fmt.Sprintf("https://www.youtube.com/watch?v=%s", v.ID)})
-			}
+			components := &messageComponents{discordgo.ActionsRow{
+				//Components: []discordgo.MessageComponent{b.newSelectMenu(videoQuery, "search_select_menu",options)},
+			}}
 
-			var embed []*discordgo.MessageEmbed
-			_ = s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
-				Type: discordgo.InteractionResponseChannelMessageWithSource,
-				Data: &discordgo.InteractionResponseData{
-					Flags: discordgo.MessageFlags(8),
-					Embeds: append(embed, &discordgo.MessageEmbed{
-						Title: "test",
-						//Thumbnail: &discordgo.MessageEmbedThumbnail{URL: },
-						Fields: fields,
-					}),
-				},
-			})
+			s.InteractionRespond(i.Interaction, b.newInteraction("a", int(discordgo.InteractionResponseChannelMessageWithSource), b.newEmbed(
+				videoQuery[0].Title,
+				videoQuery[0].Channel_title,
+				videoQuery[0].ID,
+				videoQuery[0].Thumbnail), *components),
+			)
 
 		},
 		"refresh_playlist": func(s *discordgo.Session, i *discordgo.InteractionCreate, b *Bot) { //TODO check if playlist is empty
@@ -508,35 +506,95 @@ var (
 			}()
 
 		},
+		"random_from_playlist": func(s *discordgo.Session, i *discordgo.InteractionCreate, b *Bot) {
+			ctx := context.Background()
+			options := i.ApplicationCommandData().Options
+			command := "random_from_playlist"
+
+			err := b.DB.NewSelect().Model((*Playlist)(nil)).Where("id = ? AND user_id = ?", options[0].StringValue(), i.Member.User.ID).Scan(ctx)
+			if err != nil {
+				if err == sql.ErrNoRows {
+					_ = s.InteractionRespond(i.Interaction, b.newSimpleInteraction("playlist not found.", int(discordgo.InteractionResponseChannelMessageWithSource), 64))
+					return
+				} else {
+					_ = s.InteractionRespond(i.Interaction, b.newSimpleInteraction("internal error", int(discordgo.InteractionResponseChannelMessageWithSource), 64))
+					log.Err(err).Msgf("[%s] error while checking if playlist exists.", command)
+					return
+				}
+			}
+
+			var videoQuery []videoQuery
+			err = b.DB.NewSelect().Model(&videoQuery).
+				ColumnExpr("v.id").
+				ColumnExpr("v.title").
+				ColumnExpr("v.description").
+				ColumnExpr("v.thumbnail").
+				ColumnExpr("v.channel_title").
+				Join("JOIN \"playlistsDB_video\" AS v ON v.id = video_query.video_id").
+				Where("video_query.playlist_id = ?", options[0].StringValue()).
+				OrderExpr("RANDOM()").
+				Scan(ctx)
+			if err != nil {
+				_ = s.InteractionRespond(i.Interaction, b.newSimpleInteraction("internal error", int(discordgo.InteractionResponseChannelMessageWithSource), 64))
+				log.Err(err).Msgf("[%s] error while checking if playlist exists.", command)
+				return
+			}
+
+			list := videoQuery[1:]
+			b.randomMap[fmt.Sprintf("%s-new_random_from_playlist", i.Member.User.ID)] = &list
+
+			components := messageComponents{discordgo.ActionsRow{
+				Components: []discordgo.MessageComponent{b.newButton("New Random", "new_random_from_playlist", discordgo.PrimaryButton)},
+			}}
+
+			s.InteractionRespond(i.Interaction, b.newInteraction("a", int(discordgo.InteractionResponseChannelMessageWithSource), b.newEmbed(
+				videoQuery[0].Title,
+				videoQuery[0].Channel_title,
+				videoQuery[0].ID,
+				videoQuery[0].Thumbnail), components),
+			)
+		},
 	}
 )
 
 func (b *Bot) interactionHandler(s *discordgo.Session, i *discordgo.InteractionCreate) {
-	_, ok := i.Interaction.Data.(discordgo.MessageComponentInteractionData)
+	mC, ok := i.Interaction.Data.(discordgo.MessageComponentInteractionData)
 	if !ok {
 		if h, ok := commandHandlers[i.ApplicationCommandData().Name]; ok {
 			h(s, i, b)
 		}
 		return
 	}
+
+	switch mC.CustomID {
+	case "new_random_from_playlist":
+		video := (*b.randomMap[fmt.Sprintf("%s-%s", i.Member.User.ID, mC.CustomID)])[0]
+		remaining := (*b.randomMap[fmt.Sprintf("%s-%s", i.Member.User.ID, mC.CustomID)])[1:]
+		b.randomMap[fmt.Sprintf("%s-%s", i.Member.User.ID, mC.CustomID)] = &remaining
+
+		components := messageComponents{discordgo.ActionsRow{
+			Components: []discordgo.MessageComponent{b.newButton("New Random", "new_random_from_playlist", discordgo.PrimaryButton)},
+		}}
+
+		s.InteractionRespond(i.Interaction, b.newInteraction("random", int(discordgo.InteractionResponseChannelMessageWithSource), b.newEmbed(
+			video.Title,
+			video.Channel_title,
+			video.ID,
+			video.Thumbnail), components),
+		)
+
+		s.ChannelMessageDelete(i.Message.ChannelID, i.Message.ID)
+	}
+
 }
 
-func (b *Bot) newEmbededInteraction(title, footer, content string, mC []discordgo.MessageComponent, respType int) *discordgo.InteractionResponse {
-	return &discordgo.InteractionResponse{
-		Type: discordgo.InteractionResponseType(respType),
-		Data: &discordgo.InteractionResponseData{
-			Title: title,
-			Flags: 64,
-			Embeds: []*discordgo.MessageEmbed{&discordgo.MessageEmbed{
-				Description: content,
-				Color:       4989874,
-				Footer:      &discordgo.MessageEmbedFooter{Text: footer},
-			}},
-			Components: messageComponents{discordgo.ActionsRow{
-				Components: mC,
-			},
-			},
-		},
+func (b *Bot) newEmbed(title, content, id, imageURL string) discordgo.MessageEmbed {
+	return discordgo.MessageEmbed{
+		URL:         fmt.Sprintf("https://www.youtube.com/watch?v=%s", id),
+		Title:       title,
+		Description: content,
+		//Image:       &discordgo.MessageEmbedImage{URL: imageURL, Height: 10, Width: 10},
+		Thumbnail: &discordgo.MessageEmbedThumbnail{URL: imageURL, Height: 10, Width: 10},
 	}
 }
 
@@ -550,11 +608,32 @@ func (b *Bot) newSimpleInteraction(content string, respType int, flags int) *dis
 	}
 }
 
-func (b *Bot) newButton(label, customID, url string, style discordgo.ButtonStyle) discordgo.Button {
+func (b *Bot) newButton(label, customID string, style discordgo.ButtonStyle) discordgo.Button {
 	return discordgo.Button{
+		Emoji:    discordgo.ComponentEmoji{Name: "MestresTaekwons", ID: "945540057866047498"},
 		Label:    label,
 		Style:    style,
 		CustomID: customID,
-		URL:      url,
+	}
+}
+
+func (b *Bot) newSelectMenu(videos []videoQuery, customID string, options []discordgo.SelectMenuOption) discordgo.SelectMenu {
+	//emj := discordgo.ComponentEmoji{ID: "711766034138267668", Name: "CH_PressFButton"}
+	return discordgo.SelectMenu{
+		CustomID: customID,
+		Options:  options,
+	}
+
+}
+
+func (b *Bot) newInteraction(title string, respType int, embed discordgo.MessageEmbed, mC []discordgo.MessageComponent) *discordgo.InteractionResponse {
+	return &discordgo.InteractionResponse{
+		Type: discordgo.InteractionResponseType(respType),
+		Data: &discordgo.InteractionResponseData{
+			Title:      title,
+			Flags:      16,
+			Embeds:     []*discordgo.MessageEmbed{&embed},
+			Components: mC,
+		},
 	}
 }
