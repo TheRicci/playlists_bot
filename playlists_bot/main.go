@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
-	"strings"
 	"syscall"
 	"time"
 
@@ -20,6 +19,7 @@ import (
 type Bot struct {
 	*discordgo.Session
 	*database
+	randomMap map[string]*[]videoQuery //no need to use mutex, every key will only be accessed by one user from one command
 }
 
 func newBot() Bot {
@@ -31,6 +31,7 @@ func newBot() Bot {
 	return Bot{
 		dg,
 		newDB(),
+		make(map[string]*[]videoQuery),
 	}
 }
 
@@ -71,22 +72,15 @@ func fetchVideos(playlistID string) (*[]Video, error) {
 				m[item.Snippet.ResourceId.VideoId] = struct{}{}
 			}
 
-			var description string
-			index := strings.Index(item.Snippet.Description, ".")
-			if index != -1 {
-				description = item.Snippet.Description[:index]
-			} else if len(item.Snippet.Description) > 255 {
-				description = item.Snippet.Description[:255]
-			}
-
 			fmt.Println(item.Snippet.ResourceId.VideoId, ": ", item.Snippet.Title)
 			videos = append(videos, Video{
-				ID:          item.Snippet.ResourceId.VideoId,
-				Title:       item.Snippet.Title,
-				Description: description,
-				Thumbnail:   item.Snippet.Thumbnails.Medium.Url,
-				Updated_at:  &now,
-				Created_at:  &now,
+				ID:            item.Snippet.ResourceId.VideoId,
+				Title:         item.Snippet.Title,
+				Thumbnail:     item.Snippet.Thumbnails.Medium.Url,
+				Channel_id:    item.Snippet.ChannelId,
+				Channel_title: item.Snippet.ChannelTitle,
+				Updated_at:    &now,
+				Created_at:    &now,
 			})
 		}
 
