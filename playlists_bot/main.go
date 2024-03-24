@@ -19,7 +19,8 @@ import (
 type Bot struct {
 	*discordgo.Session
 	*database
-	randomMap map[string]*[]videoQuery //no need to use mutex, every key will only be accessed by one user from one command
+	randomMap         map[string]*[]videoQuery //no need to use mutex, every key will only be accessed by one user from one command
+	openCommandRandom map[string]*discordgo.Message
 }
 
 func newBot() Bot {
@@ -32,6 +33,7 @@ func newBot() Bot {
 		dg,
 		newDB(),
 		make(map[string]*[]videoQuery),
+		make(map[string]*discordgo.Message),
 	}
 }
 
@@ -117,6 +119,7 @@ func main() {
 	}
 
 	bot.AddHandler(bot.interactionHandler)
+	bot.AddHandler(bot.MessageHandler)
 
 	fmt.Println("Bot is now running. Press CTRL-C to exit.")
 	sc := make(chan os.Signal, 1)

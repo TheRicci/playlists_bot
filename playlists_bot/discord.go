@@ -511,7 +511,8 @@ var (
 			options := i.ApplicationCommandData().Options
 			command := "random_from_playlist"
 
-			err := b.DB.NewSelect().Model((*Playlist)(nil)).Where("id = ? AND user_id = ?", options[0].StringValue(), i.Member.User.ID).Scan(ctx)
+			var Playlist Playlist
+			err := b.DB.NewSelect().Model(&Playlist).Where("id = ? AND user_id = ?", options[0].StringValue(), i.Member.User.ID).Scan(ctx)
 			if err != nil {
 				if err == sql.ErrNoRows {
 					_ = s.InteractionRespond(i.Interaction, b.newSimpleInteraction("playlist not found.", int(discordgo.InteractionResponseChannelMessageWithSource), 64))
@@ -544,15 +545,16 @@ var (
 			b.randomMap[fmt.Sprintf("%s-new_random_from_playlist", i.Member.User.ID)] = &list
 
 			components := messageComponents{discordgo.ActionsRow{
-				Components: []discordgo.MessageComponent{b.newButton("New Random", "new_random_from_playlist", discordgo.PrimaryButton)},
+				Components: []discordgo.MessageComponent{b.newButton("Next Random", "new_random_from_playlist", discordgo.PrimaryButton)},
 			}}
 
-			s.InteractionRespond(i.Interaction, b.newInteraction("a", int(discordgo.InteractionResponseChannelMessageWithSource), b.newEmbed(
+			s.InteractionRespond(i.Interaction, b.newInteraction("random", int(discordgo.InteractionResponseChannelMessageWithSource), b.newEmbed(
 				videoQuery[0].Title,
 				videoQuery[0].Channel_title,
 				videoQuery[0].ID,
 				videoQuery[0].Thumbnail), components),
 			)
+
 		},
 	}
 )
@@ -568,22 +570,42 @@ func (b *Bot) interactionHandler(s *discordgo.Session, i *discordgo.InteractionC
 
 	switch mC.CustomID {
 	case "new_random_from_playlist":
+		lenVideoArray := len(*b.randomMap[fmt.Sprintf("%s-%s", i.Member.User.ID, mC.CustomID)])
+		if lenVideoArray == 0 {
+			return
+		}
+
 		video := (*b.randomMap[fmt.Sprintf("%s-%s", i.Member.User.ID, mC.CustomID)])[0]
-		remaining := (*b.randomMap[fmt.Sprintf("%s-%s", i.Member.User.ID, mC.CustomID)])[1:]
-		b.randomMap[fmt.Sprintf("%s-%s", i.Member.User.ID, mC.CustomID)] = &remaining
+		var components messageComponents
 
-		components := messageComponents{discordgo.ActionsRow{
-			Components: []discordgo.MessageComponent{b.newButton("New Random", "new_random_from_playlist", discordgo.PrimaryButton)},
-		}}
+		if lenVideoArray == 1 {
+			components = messageComponents{}
+		} else {
+			remaining := (*b.randomMap[fmt.Sprintf("%s-%s", i.Member.User.ID, mC.CustomID)])[1:]
+			b.randomMap[fmt.Sprintf("%s-%s", i.Member.User.ID, mC.CustomID)] = &remaining
 
-		s.InteractionRespond(i.Interaction, b.newInteraction("random", int(discordgo.InteractionResponseChannelMessageWithSource), b.newEmbed(
+			components = messageComponents{discordgo.ActionsRow{
+				Components: []discordgo.MessageComponent{b.newButton("Next Random", "new_random_from_playlist", discordgo.PrimaryButton)},
+			}}
+		}
+
+		s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+			Type: discordgo.InteractionResponseDeferredChannelMessageWithSource,
+			Data: &discordgo.InteractionResponseData{Content: "wait", CustomID: "wait"},
+		})
+
+		embed := b.newEmbed(
 			video.Title,
 			video.Channel_title,
 			video.ID,
-			video.Thumbnail), components),
-		)
+			video.Thumbnail)
+		s.ChannelMessageEditComplex(&discordgo.MessageEdit{
+			Components: components,
+			Embeds:     []*discordgo.MessageEmbed{&embed},
+			ID:         i.Message.ID,
+			Channel:    i.ChannelID,
+		})
 
-		s.ChannelMessageDelete(i.Message.ChannelID, i.Message.ID)
 	}
 
 }
@@ -593,8 +615,7 @@ func (b *Bot) newEmbed(title, content, id, imageURL string) discordgo.MessageEmb
 		URL:         fmt.Sprintf("https://www.youtube.com/watch?v=%s", id),
 		Title:       title,
 		Description: content,
-		//Image:       &discordgo.MessageEmbedImage{URL: imageURL, Height: 10, Width: 10},
-		Thumbnail: &discordgo.MessageEmbedThumbnail{URL: imageURL, Height: 10, Width: 10},
+		Image:       &discordgo.MessageEmbedImage{URL: imageURL, Height: 10, Width: 10},
 	}
 }
 
@@ -610,7 +631,7 @@ func (b *Bot) newSimpleInteraction(content string, respType int, flags int) *dis
 
 func (b *Bot) newButton(label, customID string, style discordgo.ButtonStyle) discordgo.Button {
 	return discordgo.Button{
-		Emoji:    discordgo.ComponentEmoji{Name: "MestresTaekwons", ID: "945540057866047498"},
+		Emoji:    discordgo.ComponentEmoji{Name: "bluestar", ID: "1221587912861417613"},
 		Label:    label,
 		Style:    style,
 		CustomID: customID,
@@ -636,4 +657,25 @@ func (b *Bot) newInteraction(title string, respType int, embed discordgo.Message
 			Components: mC,
 		},
 	}
+}
+
+func (b *Bot) MessageHandler(s *discordgo.Session, m *discordgo.MessageCreate) {
+	if !m.Author.Bot {
+		return
+	}
+
+	if len((*m.Message).Embeds) == 0 && (*m.Message).Type == 19 && (*m.Message).Content == "" {
+		time.Sleep(time.Second)
+		s.ChannelMessageDelete(m.ChannelID, m.ID)
+		return
+	}
+
+	if m.Interaction != nil && (*m.Interaction).Name == "random_from_playlist" {
+		if m, ok := b.openCommandRandom[m.Interaction.User.ID]; ok {
+			s.ChannelMessageDelete(m.ChannelID, m.ID)
+		}
+
+		b.openCommandRandom[m.Interaction.User.ID] = m.Message
+	}
+
 }
