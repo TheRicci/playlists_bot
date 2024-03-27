@@ -2,11 +2,11 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
-
-	"database/sql"
 
 	"github.com/bwmarrin/discordgo"
 	"github.com/rs/zerolog/log"
@@ -358,8 +358,8 @@ var (
 				}
 			}
 
-			var videoQuery []videoQuery
-			err = b.DB.NewSelect().Model(&videoQuery).
+			var videos []videoQuery
+			err = b.DB.NewSelect().Model(&videos).
 				ColumnExpr("v.id").
 				ColumnExpr("v.title").
 				ColumnExpr("v.description").
@@ -372,15 +372,59 @@ var (
 				return
 			}
 
+			if len(videos) == 0 {
+				_ = s.InteractionRespond(i.Interaction, b.newSimpleInteraction("no videos found.", int(discordgo.InteractionResponseChannelMessageWithSource), 64))
+			}
+
+			emj := discordgo.ComponentEmoji{ID: "1221585609907372104", Name: "vhss"}
+
+			// separate query result in different lists of options
+			var list []*[]discordgo.SelectMenuOption
+			var menuOptions []discordgo.SelectMenuOption
+			j := 0
+			for i2, v := range videos {
+				menuOptions = append(menuOptions, discordgo.SelectMenuOption{
+					Label:       v.Title,
+					Value:       fmt.Sprint(i2),
+					Emoji:       emj,
+					Description: fmt.Sprintf("from channel: %s", v.Channel_title),
+				})
+
+				if i2 == len(videos)-1 {
+					list = append(list, &menuOptions)
+					b.openCommandSearch[i.Member.User.ID] = MenuSelectionState{
+						maxIndex:     j,
+						currentIndex: 0,
+						videos:       videos,
+						list:         list,
+					}
+				} else if i2%24 == 0 && i2 > 0 {
+					list = append(list, &menuOptions)
+					menuOptions = make([]discordgo.SelectMenuOption, 0)
+					j++
+				}
+			}
+			var componentsList []discordgo.MessageComponent
+			var button discordgo.Button
+			componentsList = append(componentsList, b.newSelectMenu("search_select_menu", (*list[0])[1:]))
+			if len(list) > 1 {
+				button = b.newButton("", "next_search_list", discordgo.PrimaryButton, discordgo.ComponentEmoji{Name: "button", ID: "1222350837406371880"})
+				componentsList = append(componentsList, button)
+			}
+
+			state := b.openCommandSearch[i.Member.User.ID]
+			state.currentButtons = []discordgo.Button{button}
+			b.openCommandSearch[i.Member.User.ID] = state
+
 			components := &messageComponents{discordgo.ActionsRow{
-				//Components: []discordgo.MessageComponent{b.newSelectMenu(videoQuery, "search_select_menu",options)},
+				Components: componentsList,
 			}}
 
-			s.InteractionRespond(i.Interaction, b.newInteraction("a", int(discordgo.InteractionResponseChannelMessageWithSource), b.newEmbed(
-				videoQuery[0].Title,
-				videoQuery[0].Channel_title,
-				videoQuery[0].ID,
-				videoQuery[0].Thumbnail), *components),
+			s.InteractionRespond(i.Interaction, b.newInteraction("search", int(discordgo.InteractionResponseChannelMessageWithSource), b.newEmbed(
+				videos[0].Title,
+				videos[0].Channel_title,
+				videos[0].ID,
+				videos[0].Thumbnail), *components),
 			)
 
 		},
@@ -545,16 +589,17 @@ var (
 			b.randomMap[fmt.Sprintf("%s-new_random_from_playlist", i.Member.User.ID)] = &list
 
 			components := messageComponents{discordgo.ActionsRow{
-				Components: []discordgo.MessageComponent{b.newButton("Next Random", "new_random_from_playlist", discordgo.PrimaryButton)},
+				Components: []discordgo.MessageComponent{
+					b.newButton("Next Random", "new_random_from_playlist", discordgo.PrimaryButton, discordgo.ComponentEmoji{Name: "bluestar", ID: "1221587912861417613"})},
 			}}
 
-			s.InteractionRespond(i.Interaction, b.newInteraction("random", int(discordgo.InteractionResponseChannelMessageWithSource), b.newEmbed(
+			err = s.InteractionRespond(i.Interaction, b.newInteraction("random", int(discordgo.InteractionResponseChannelMessageWithSource), b.newEmbed(
 				videoQuery[0].Title,
 				videoQuery[0].Channel_title,
 				videoQuery[0].ID,
 				videoQuery[0].Thumbnail), components),
 			)
-
+			fmt.Println(err)
 		},
 	}
 )
@@ -567,6 +612,8 @@ func (b *Bot) interactionHandler(s *discordgo.Session, i *discordgo.InteractionC
 		}
 		return
 	}
+
+	fmt.Println(mC.CustomID)
 
 	switch mC.CustomID {
 	case "new_random_from_playlist":
@@ -585,7 +632,10 @@ func (b *Bot) interactionHandler(s *discordgo.Session, i *discordgo.InteractionC
 			b.randomMap[fmt.Sprintf("%s-%s", i.Member.User.ID, mC.CustomID)] = &remaining
 
 			components = messageComponents{discordgo.ActionsRow{
-				Components: []discordgo.MessageComponent{b.newButton("Next Random", "new_random_from_playlist", discordgo.PrimaryButton)},
+				Components: []discordgo.MessageComponent{
+					b.newButton("Next Random",
+						"new_random_from_playlist",
+						discordgo.PrimaryButton, discordgo.ComponentEmoji{Name: "bluestar", ID: "1221587912861417613"})},
 			}}
 		}
 
@@ -605,7 +655,29 @@ func (b *Bot) interactionHandler(s *discordgo.Session, i *discordgo.InteractionC
 			ID:         i.Message.ID,
 			Channel:    i.ChannelID,
 		})
+	case "search_select_menu":
+		fmt.Println(mC.Values)
+		menuState := b.openCommandSearch[i.Member.User.ID]
+		videoIndex, _ := strconv.Atoi(mC.Values[0])
+		list := *menuState.list[menuState.currentIndex]
+		actualVideoIndex := videoIndex + (menuState.currentIndex * 25)
 
+		comps := []discordgo.MessageComponent{b.newSelectMenu("search_select_menu", append(list[:actualVideoIndex], list[actualVideoIndex+1:]...))}
+		for _, b := range menuState.currentButtons {
+			comps = append(comps, b)
+		}
+		components := &messageComponents{discordgo.ActionsRow{
+			Components: comps,
+		}}
+
+		s.InteractionRespond(i.Interaction, b.newInteraction("search", int(discordgo.InteractionResponseChannelMessageWithSource), b.newEmbed(
+			menuState.videos[actualVideoIndex].Title,
+			menuState.videos[actualVideoIndex].Channel_title,
+			menuState.videos[actualVideoIndex].ID,
+			menuState.videos[actualVideoIndex].Thumbnail), *components),
+		)
+	case "next_search_list":
+		//todo
 	}
 
 }
@@ -629,17 +701,16 @@ func (b *Bot) newSimpleInteraction(content string, respType int, flags int) *dis
 	}
 }
 
-func (b *Bot) newButton(label, customID string, style discordgo.ButtonStyle) discordgo.Button {
+func (b *Bot) newButton(label, customID string, style discordgo.ButtonStyle, emj discordgo.ComponentEmoji) discordgo.Button {
 	return discordgo.Button{
-		Emoji:    discordgo.ComponentEmoji{Name: "bluestar", ID: "1221587912861417613"},
+		Emoji:    emj,
 		Label:    label,
 		Style:    style,
 		CustomID: customID,
 	}
 }
 
-func (b *Bot) newSelectMenu(videos []videoQuery, customID string, options []discordgo.SelectMenuOption) discordgo.SelectMenu {
-	//emj := discordgo.ComponentEmoji{ID: "711766034138267668", Name: "CH_PressFButton"}
+func (b *Bot) newSelectMenu(customID string, options []discordgo.SelectMenuOption) discordgo.SelectMenu {
 	return discordgo.SelectMenu{
 		CustomID: customID,
 		Options:  options,

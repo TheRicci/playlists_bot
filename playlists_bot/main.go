@@ -21,10 +21,11 @@ type Bot struct {
 }
 
 type MenuSelectionState struct {
-	currentIndex int
-	maxIndex     int
-	videos       []videoQuery
-	list         []*[]discordgo.SelectMenuOption
+	currentIndex   int
+	maxIndex       int
+	videos         []videoQuery
+	list           []*[]discordgo.SelectMenuOption
+	currentButtons []discordgo.Button
 }
 
 func newBot() Bot {
