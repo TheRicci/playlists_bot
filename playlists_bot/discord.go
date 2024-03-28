@@ -660,7 +660,7 @@ func (b *Bot) interactionHandler(s *discordgo.Session, i *discordgo.InteractionC
 		menuState := b.openCommandSearch[i.Member.User.ID]
 		videoIndex, _ := strconv.Atoi(mC.Values[0])
 		list := *menuState.list[menuState.currentIndex]
-		actualVideoIndex := videoIndex + (menuState.currentIndex * 25)
+		actualVideoIndex := videoIndex + (menuState.currentIndex * 24)
 
 		comps := []discordgo.MessageComponent{b.newSelectMenu("search_select_menu", append(list[:actualVideoIndex], list[actualVideoIndex+1:]...))}
 		for _, b := range menuState.currentButtons {
@@ -676,10 +676,56 @@ func (b *Bot) interactionHandler(s *discordgo.Session, i *discordgo.InteractionC
 			menuState.videos[actualVideoIndex].ID,
 			menuState.videos[actualVideoIndex].Thumbnail), *components),
 		)
+
 	case "next_search_list":
-		//todo
+		menuState := b.openCommandSearch[i.Member.User.ID]
+		menuState.currentIndex++
+		b.openCommandSearch[i.Member.User.ID] = menuState
+		b.searchMenu(i, s, menuState)
+
+	case "previous_search_list":
+		menuState := b.openCommandSearch[i.Member.User.ID]
+		menuState.currentIndex--
+		b.openCommandSearch[i.Member.User.ID] = menuState
+		b.searchMenu(i, s, menuState)
+
 	}
 
+}
+
+func (b *Bot) searchMenu(i *discordgo.InteractionCreate, s *discordgo.Session, menuState MenuSelectionState) {
+	buttons := b.buttonsChange(menuState.currentIndex, menuState.maxIndex)
+	list := *menuState.list[menuState.currentIndex]
+	actualVideoIndex := menuState.currentIndex * 25
+
+	comps := []discordgo.MessageComponent{b.newSelectMenu("search_select_menu", list[1:])}
+	for _, b := range buttons {
+		comps = append(comps, b)
+	}
+	components := &messageComponents{discordgo.ActionsRow{
+		Components: comps,
+	}}
+
+	s.InteractionRespond(i.Interaction, b.newInteraction("search", int(discordgo.InteractionResponseChannelMessageWithSource), b.newEmbed(
+		menuState.videos[actualVideoIndex].Title,
+		menuState.videos[actualVideoIndex].Channel_title,
+		menuState.videos[actualVideoIndex].ID,
+		menuState.videos[actualVideoIndex].Thumbnail), *components),
+	)
+}
+
+func (b *Bot) buttonsChange(currentIndex, maxIndex int) []discordgo.Button {
+	buttons := []discordgo.Button{
+		b.newButton("", "next_search_list", discordgo.PrimaryButton, discordgo.ComponentEmoji{Name: "button", ID: "1222350837406371880"}),
+		b.newButton("", "previous_search_list", discordgo.PrimaryButton, discordgo.ComponentEmoji{Name: "button2", ID: "1222350851188854804"}),
+	}
+	if currentIndex == 0 {
+		return buttons[:1]
+	}
+	if currentIndex == maxIndex {
+		return buttons[1:]
+	}
+	return buttons
 }
 
 func (b *Bot) newEmbed(title, content, id, imageURL string) discordgo.MessageEmbed {
