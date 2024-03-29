@@ -54,8 +54,8 @@ func fetchVideos(playlistID string) (*[]Video, error) {
 				ID:            item.Snippet.ResourceId.VideoId,
 				Title:         item.Snippet.Title,
 				Thumbnail:     item.Snippet.Thumbnails.Medium.Url,
-				Channel_id:    item.Snippet.ChannelId,
-				Channel_title: item.Snippet.ChannelTitle,
+				Channel_id:    item.Snippet.VideoOwnerChannelId,
+				Channel_title: item.Snippet.VideoOwnerChannelTitle,
 				Updated_at:    &now,
 				Created_at:    &now,
 			})
