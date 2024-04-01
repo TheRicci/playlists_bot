@@ -15,7 +15,7 @@ import (
 type Bot struct {
 	*discordgo.Session
 	*database
-	randomMap         map[string]*[]videoQuery //no need to use mutex, every key will only be accessed by one user from one command
+	randomMap         map[string]*[]videoQuery //no need to use mutex, every key will only be accessed by one user
 	openCommands      map[string]*discordgo.Message
 	openCommandSearch map[string]MenuSelectionState
 }

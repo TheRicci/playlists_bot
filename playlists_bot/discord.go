@@ -85,7 +85,7 @@ var (
 			},
 		},
 		{
-			Name:        "search",
+			Name:        "search_all",
 			Description: "search a string in all playlists",
 			Options: []*discordgo.ApplicationCommandOption{
 				{
@@ -341,6 +341,48 @@ var (
 			})
 
 		},
+		"search_all": func(s *discordgo.Session, interaction *discordgo.InteractionCreate, b *Bot) {
+			ctx := context.Background()
+			options := interaction.ApplicationCommandData().Options
+			command := "search_all"
+			user := interaction.Member.User.ID
+			if options[1] != nil {
+				user = options[1].StringValue()
+			}
+
+			var videos []videoQuery
+			err := b.DB.NewSelect().Model(&videos).
+				ColumnExpr("v.id").
+				ColumnExpr("v.title").
+				ColumnExpr("v.thumbnail").
+				ColumnExpr("v.channel_title").
+				Join("JOIN \"playlistsDB_video\" AS v ON v.id = video_query.video_id").
+				Where("video_query.user_id = ?", user).
+				Scan(ctx)
+			if err != nil {
+				_ = s.InteractionRespond(interaction.Interaction, b.newSimpleInteraction("internal error", int(discordgo.InteractionResponseChannelMessageWithSource), 64))
+				log.Err(err).Msgf("[%s] error while checking if playlist exists.", command)
+				return
+			}
+			if len(videos) == 0 {
+				_ = s.InteractionRespond(interaction.Interaction, b.newSimpleInteraction("no videos found.", int(discordgo.InteractionResponseChannelMessageWithSource), 64))
+				return
+			}
+
+			components, video := b.searchFunction(options[0].StringValue(), interaction, videos, command)
+			if components == nil {
+				_ = s.InteractionRespond(interaction.Interaction, b.newSimpleInteraction("internal error", int(discordgo.InteractionResponseChannelMessageWithSource), 64))
+				return
+			}
+
+			s.InteractionRespond(interaction.Interaction, b.newInteraction("search", int(discordgo.InteractionResponseChannelMessageWithSource), b.newEmbed(
+				video.Title,
+				video.Channel_title,
+				video.ID,
+				video.Thumbnail), *components),
+			)
+
+		},
 		"search_in_playlist": func(s *discordgo.Session, interaction *discordgo.InteractionCreate, b *Bot) {
 			ctx := context.Background()
 			options := interaction.ApplicationCommandData().Options
@@ -363,10 +405,8 @@ var (
 			err = b.DB.NewSelect().Model(&videos).
 				ColumnExpr("v.id").
 				ColumnExpr("v.title").
-				ColumnExpr("v.description").
 				ColumnExpr("v.thumbnail").
 				ColumnExpr("v.channel_title").
-				ColumnExpr("v.description").
 				Join("JOIN \"playlistsDB_video\" AS v ON v.id = video_query.video_id").
 				Where("video_query.playlist_id = ?", options[0].StringValue()).
 				Scan(ctx)
@@ -375,102 +415,22 @@ var (
 				log.Err(err).Msgf("[%s] error while checking if playlist exists.", command)
 				return
 			}
-
 			if len(videos) == 0 {
 				_ = s.InteractionRespond(interaction.Interaction, b.newSimpleInteraction("no videos found.", int(discordgo.InteractionResponseChannelMessageWithSource), 64))
-			}
-			fmt.Println(len(videos))
-
-			indexMapping := bleve.NewIndexMapping()
-			index, err := bleve.NewMemOnly(indexMapping)
-			if err != nil {
-				_ = s.InteractionRespond(interaction.Interaction, b.newSimpleInteraction("internal error", int(discordgo.InteractionResponseChannelMessageWithSource), 64))
-				log.Err(err).Msgf("[%s] error while creating mem only index", command)
 				return
 			}
 
-			for _, data := range videos {
-				err := index.Index(data.ID, data)
-				if err != nil {
-					_ = s.InteractionRespond(interaction.Interaction, b.newSimpleInteraction("internal error", int(discordgo.InteractionResponseChannelMessageWithSource), 64))
-					log.Err(err).Msgf("[%s] error while indexing.", command)
-					return
-				}
-			}
-
-			query := bleve.NewQueryStringQuery(options[1].StringValue())
-			searchRequest := bleve.NewSearchRequest(query)
-			searchResult, err := index.Search(searchRequest)
-			if err != nil {
+			components, video := b.searchFunction(options[1].StringValue(), interaction, videos, command)
+			if components == nil {
 				_ = s.InteractionRespond(interaction.Interaction, b.newSimpleInteraction("internal error", int(discordgo.InteractionResponseChannelMessageWithSource), 64))
-				log.Err(err).Msgf("[%s] search error.", command)
 				return
 			}
-
-			videosResult := make([]videoQuery, len(searchResult.Hits))
-			for i, hit := range searchResult.Hits {
-				fmt.Println(hit.Fields)
-				videosResult[i].ID = hit.Fields["id"].(string)
-				videosResult[i].Title = hit.Fields["title"].(string)
-				videosResult[i].Description = hit.Fields["description"].(string)
-				videosResult[i].Thumbnail = hit.Fields["thumbnail"].(string)
-				videosResult[i].Channel_title = hit.Fields["channel_title"].(string)
-			}
-
-			emj := discordgo.ComponentEmoji{ID: "1221585609907372104", Name: "vhss"}
-
-			// separate query result in different lists of options
-			var list []*[]discordgo.SelectMenuOption
-			var menuOptions []discordgo.SelectMenuOption
-			i := 0
-			j := 0
-			for i2, v := range videosResult {
-				menuOptions = append(menuOptions, discordgo.SelectMenuOption{
-					Label:       v.Title,
-					Value:       fmt.Sprint(i),
-					Emoji:       emj,
-					Description: fmt.Sprintf("from channel: %s", v.Channel_title),
-				})
-				if i2 == len(videosResult)-1 {
-					newOptions := menuOptions
-					list = append(list, &newOptions)
-					b.openCommandSearch[interaction.Member.User.ID] = MenuSelectionState{
-						maxIndex:     j,
-						currentIndex: 0,
-						videos:       videosResult,
-						list:         list,
-					}
-				} else if i == 24 {
-					newOptions := menuOptions
-					list = append(list, &newOptions)
-					menuOptions = make([]discordgo.SelectMenuOption, 0)
-					j++
-					i = 0
-					continue
-				}
-				i++
-			}
-
-			var button discordgo.Button
-			var components messageComponents
-			if len(videosResult) > 1 {
-				components = messageComponents{discordgo.ActionsRow{
-					Components: []discordgo.MessageComponent{b.newSelectMenu("search_select_menu", (*list[0])[1:])},
-				}}
-				if len(list) > 1 {
-					button = b.newButton("next", "next_search_list", discordgo.PrimaryButton, discordgo.ComponentEmoji{Name: "button", ID: "1222350837406371880"})
-					components = append(components, discordgo.ActionsRow{Components: []discordgo.MessageComponent{button}})
-				}
-			}
-			state := b.openCommandSearch[interaction.Member.User.ID]
-			state.currentButtons = []discordgo.Button{button}
-			b.openCommandSearch[interaction.Member.User.ID] = state
 
 			s.InteractionRespond(interaction.Interaction, b.newInteraction("search", int(discordgo.InteractionResponseChannelMessageWithSource), b.newEmbed(
-				videosResult[0].Title,
-				videosResult[0].Channel_title,
-				videosResult[0].ID,
-				videosResult[0].Thumbnail), components),
+				video.Title,
+				video.Channel_title,
+				video.ID,
+				video.Thumbnail), *components),
 			)
 
 		},
@@ -650,6 +610,94 @@ var (
 	}
 )
 
+func (b *Bot) searchFunction(q string, interaction *discordgo.InteractionCreate, videos []videoQuery, command string) (*messageComponents, *videoQuery) {
+	indexMapping := bleve.NewIndexMapping()
+	index, err := bleve.NewMemOnly(indexMapping)
+	if err != nil {
+		log.Err(err).Msgf("[%s] error while creating mem only index", command)
+		return nil, nil
+	}
+
+	for _, data := range videos {
+		err := index.Index(data.Title, data)
+		if err != nil {
+			log.Err(err).Msgf("[%s] error while indexing.", command)
+			return nil, nil
+		}
+	}
+
+	defer index.Close()
+
+	query := bleve.NewQueryStringQuery(q)
+	searchRequest := bleve.NewSearchRequest(query)
+	searchRequest.Size = 200
+	searchRequest.Fields = []string{"ID", "Title", "Thumbnail", "Channel_title"}
+	searchResult, err := index.Search(searchRequest)
+	if err != nil {
+		log.Err(err).Msgf("[%s] search error.", command)
+		return nil, nil
+	}
+
+	videosResult := make([]videoQuery, len(searchResult.Hits))
+
+	for i, hit := range searchResult.Hits {
+		videosResult[i].ID = hit.Fields["ID"].(string)
+		videosResult[i].Title = hit.Fields["Title"].(string)
+		videosResult[i].Thumbnail = hit.Fields["Thumbnail"].(string)
+		videosResult[i].Channel_title = hit.Fields["Channel_title"].(string)
+	}
+	emj := discordgo.ComponentEmoji{ID: "1221585609907372104", Name: "vhss"}
+
+	// separate query result in different lists of options
+	var list []*[]discordgo.SelectMenuOption
+	var menuOptions []discordgo.SelectMenuOption
+	i := 0
+	j := 0
+	for i2, v := range videosResult {
+		menuOptions = append(menuOptions, discordgo.SelectMenuOption{
+			Label:       v.Title,
+			Value:       fmt.Sprint(i),
+			Emoji:       emj,
+			Description: fmt.Sprintf("from channel: %s", v.Channel_title),
+		})
+		if i2 == len(videosResult)-1 {
+			newOptions := menuOptions
+			list = append(list, &newOptions)
+			b.openCommandSearch[interaction.Member.User.ID] = MenuSelectionState{
+				maxIndex:     j,
+				currentIndex: 0,
+				videos:       videosResult,
+				list:         list,
+			}
+		} else if i == 24 {
+			newOptions := menuOptions
+			list = append(list, &newOptions)
+			menuOptions = make([]discordgo.SelectMenuOption, 0)
+			j++
+			i = 0
+			continue
+		}
+		i++
+	}
+
+	var button discordgo.Button
+	var components messageComponents
+	if len(videosResult) > 1 {
+		components = messageComponents{discordgo.ActionsRow{
+			Components: []discordgo.MessageComponent{b.newSelectMenu("search_select_menu", (*list[0])[1:])},
+		}}
+		if len(list) > 1 {
+			button = b.newButton("next", "next_search_list", discordgo.PrimaryButton, discordgo.ComponentEmoji{Name: "button", ID: "1222350837406371880"})
+			components = append(components, discordgo.ActionsRow{Components: []discordgo.MessageComponent{button}})
+		}
+	}
+	state := b.openCommandSearch[interaction.Member.User.ID]
+	state.currentButtons = []discordgo.Button{button}
+	b.openCommandSearch[interaction.Member.User.ID] = state
+
+	return &components, &videosResult[0]
+}
+
 func (b *Bot) interactionHandler(s *discordgo.Session, i *discordgo.InteractionCreate) {
 	mC, ok := i.Interaction.Data.(discordgo.MessageComponentInteractionData)
 	if !ok {
@@ -704,10 +752,7 @@ func (b *Bot) interactionHandler(s *discordgo.Session, i *discordgo.InteractionC
 		videoIndex, _ := strconv.Atoi(mC.Values[0])
 		list := *menuState.list[menuState.currentIndex]
 		actualVideoIndex := videoIndex + (menuState.currentIndex * 25)
-		fmt.Println(len(list), list)
-		fmt.Println("search_select_menu, videoIndex:", videoIndex)
 
-		fmt.Println("search_select_menu, list len:", len(list))
 		components := messageComponents{discordgo.ActionsRow{
 			Components: []discordgo.MessageComponent{b.newSelectMenu("search_select_menu", list)},
 		}}
@@ -717,14 +762,12 @@ func (b *Bot) interactionHandler(s *discordgo.Session, i *discordgo.InteractionC
 		}
 		components = append(components, discordgo.ActionsRow{Components: buttonsComps})
 
-		err := s.InteractionRespond(i.Interaction, b.newInteraction("search", int(discordgo.InteractionResponseChannelMessageWithSource), b.newEmbed(
+		s.InteractionRespond(i.Interaction, b.newInteraction("search", int(discordgo.InteractionResponseChannelMessageWithSource), b.newEmbed(
 			menuState.videos[actualVideoIndex].Title,
 			menuState.videos[actualVideoIndex].Channel_title,
 			menuState.videos[actualVideoIndex].ID,
 			menuState.videos[actualVideoIndex].Thumbnail), components),
 		)
-
-		fmt.Println(err)
 
 	case "next_search_list":
 		menuState := b.openCommandSearch[i.Member.User.ID]
@@ -745,7 +788,6 @@ func (b *Bot) searchMenu(i *discordgo.InteractionCreate, s *discordgo.Session, m
 	menuState.currentButtons = buttons
 	list := *menuState.list[menuState.currentIndex]
 	actualVideoIndex := menuState.currentIndex * 25
-	fmt.Println(len(list), list)
 
 	var components messageComponents
 	if len(list) > 1 {
@@ -759,14 +801,13 @@ func (b *Bot) searchMenu(i *discordgo.InteractionCreate, s *discordgo.Session, m
 	}
 	components = append(components, discordgo.ActionsRow{Components: buttonsComps})
 
-	err := s.InteractionRespond(i.Interaction, b.newInteraction("search", int(discordgo.InteractionResponseChannelMessageWithSource), b.newEmbed(
+	s.InteractionRespond(i.Interaction, b.newInteraction("search", int(discordgo.InteractionResponseChannelMessageWithSource), b.newEmbed(
 		menuState.videos[actualVideoIndex].Title,
 		menuState.videos[actualVideoIndex].Channel_title,
 		menuState.videos[actualVideoIndex].ID,
 		menuState.videos[actualVideoIndex].Thumbnail), components),
 	)
 
-	fmt.Println(err)
 	return menuState
 }
 
