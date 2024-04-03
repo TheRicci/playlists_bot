@@ -85,7 +85,7 @@ var (
 			},
 		},
 		{
-			Name:        "search_all",
+			Name:        "search",
 			Description: "search a string in all playlists",
 			Options: []*discordgo.ApplicationCommandOption{
 				{
@@ -95,7 +95,7 @@ var (
 					Required:    true,
 				},
 				{
-					Type:        discordgo.ApplicationCommandOptionString,
+					Type:        discordgo.ApplicationCommandOptionUser,
 					Name:        "user",
 					Description: "query an user's playlists",
 					Required:    false,
@@ -113,7 +113,7 @@ var (
 					Required:    true,
 				},
 				{
-					Type:        discordgo.ApplicationCommandOptionString,
+					Type:        discordgo.ApplicationCommandOptionUser,
 					Name:        "string",
 					Description: "query an user's playlists",
 					Required:    true,
@@ -121,17 +121,11 @@ var (
 			},
 		},
 		{
-			Name:        "get_random",
+			Name:        "random",
 			Description: "get random video from all videos on registered playlists",
 			Options: []*discordgo.ApplicationCommandOption{
 				{
-					Type:        discordgo.ApplicationCommandOptionString,
-					Name:        "string",
-					Description: "query an user's playlists",
-					Required:    true,
-				},
-				{
-					Type:        discordgo.ApplicationCommandOptionString,
+					Type:        discordgo.ApplicationCommandOptionUser,
 					Name:        "user",
 					Description: "query an user's playlists",
 					Required:    false,
@@ -341,12 +335,12 @@ var (
 			})
 
 		},
-		"search_all": func(s *discordgo.Session, interaction *discordgo.InteractionCreate, b *Bot) {
+		"search": func(s *discordgo.Session, interaction *discordgo.InteractionCreate, b *Bot) {
 			ctx := context.Background()
 			options := interaction.ApplicationCommandData().Options
 			user := interaction.Member.User.ID
-			if options[1] != nil {
-				user = options[1].StringValue()
+			if len(options) == 2 {
+				user = options[1].UserValue(s).ID
 			}
 
 			var videos []videoQuery
@@ -356,7 +350,8 @@ var (
 				ColumnExpr("v.thumbnail").
 				ColumnExpr("v.channel_title").
 				Join("JOIN \"playlistsDB_video\" AS v ON v.id = video_query.video_id").
-				Where("video_query.user_id = ?", user).
+				Join("JOIN \"playlistsDB_playlist\" AS p ON p.id = video_query.playlist_id").
+				Where("p.user_id = ?", user).
 				Scan(ctx)
 			if err != nil {
 				_ = s.InteractionRespond(interaction.Interaction, b.newSimpleInteraction("internal error", int(discordgo.InteractionResponseChannelMessageWithSource), 64))
@@ -574,7 +569,6 @@ var (
 			err = b.DB.NewSelect().Model(&videoQuery).
 				ColumnExpr("v.id").
 				ColumnExpr("v.title").
-				ColumnExpr("v.description").
 				ColumnExpr("v.thumbnail").
 				ColumnExpr("v.channel_title").
 				Join("JOIN \"playlistsDB_video\" AS v ON v.id = video_query.video_id").
@@ -588,11 +582,52 @@ var (
 			}
 
 			list := videoQuery[1:]
-			b.randomMap[fmt.Sprintf("%s-new_random_from_playlist", i.Member.User.ID)] = &list
+			b.randomMap[fmt.Sprintf("%s-new_random", i.Member.User.ID)] = &list
 
 			components := messageComponents{discordgo.ActionsRow{
 				Components: []discordgo.MessageComponent{
-					b.newButton("Next Random", "new_random_from_playlist", discordgo.PrimaryButton, discordgo.ComponentEmoji{Name: "bluestar", ID: "1221587912861417613"})},
+					b.newButton("New Random", "new_random", discordgo.PrimaryButton, discordgo.ComponentEmoji{Name: "bluestar", ID: "1221587912861417613"})},
+			}}
+
+			s.InteractionRespond(i.Interaction, b.newInteraction("random", int(discordgo.InteractionResponseChannelMessageWithSource), b.newEmbed(
+				videoQuery[0].Title,
+				videoQuery[0].Channel_title,
+				videoQuery[0].ID,
+				videoQuery[0].Thumbnail), components),
+			)
+
+		},
+		"random": func(s *discordgo.Session, i *discordgo.InteractionCreate, b *Bot) {
+			ctx := context.Background()
+			options := i.ApplicationCommandData().Options
+			user := i.Member.User.ID
+			if len(options) == 1 {
+				user = options[0].UserValue(s).ID
+			}
+
+			var videoQuery []videoQuery
+			err := b.DB.NewSelect().Model(&videoQuery).
+				ColumnExpr("v.id").
+				ColumnExpr("v.title").
+				ColumnExpr("v.thumbnail").
+				ColumnExpr("v.channel_title").
+				Join("JOIN \"playlistsDB_video\" AS v ON v.id = video_query.video_id").
+				Join("JOIN \"playlistsDB_playlist\" AS p ON p.id = video_query.playlist_id").
+				Where("p.user_id = ?", user).
+				OrderExpr("RANDOM()").
+				Scan(ctx)
+			if err != nil {
+				_ = s.InteractionRespond(i.Interaction, b.newSimpleInteraction("internal error", int(discordgo.InteractionResponseChannelMessageWithSource), 64))
+				log.Err(err).Msgf("[%s] error while checking if playlist exists.", i.ApplicationCommandData().Name)
+				return
+			}
+
+			list := videoQuery[1:]
+			b.randomMap[fmt.Sprintf("%s-new_random", i.Member.User.ID)] = &list
+
+			components := messageComponents{discordgo.ActionsRow{
+				Components: []discordgo.MessageComponent{
+					b.newButton("New Random", "new_random", discordgo.PrimaryButton, discordgo.ComponentEmoji{Name: "bluestar", ID: "1221587912861417613"})},
 			}}
 
 			s.InteractionRespond(i.Interaction, b.newInteraction("random", int(discordgo.InteractionResponseChannelMessageWithSource), b.newEmbed(
@@ -704,7 +739,7 @@ func (b *Bot) interactionHandler(s *discordgo.Session, i *discordgo.InteractionC
 	}
 
 	switch mC.CustomID {
-	case "new_random_from_playlist":
+	case "new_random":
 		lenVideoArray := len(*b.randomMap[fmt.Sprintf("%s-%s", i.Member.User.ID, mC.CustomID)])
 		if lenVideoArray == 0 {
 			return
@@ -712,7 +747,6 @@ func (b *Bot) interactionHandler(s *discordgo.Session, i *discordgo.InteractionC
 
 		video := (*b.randomMap[fmt.Sprintf("%s-%s", i.Member.User.ID, mC.CustomID)])[0]
 		var components messageComponents
-
 		if lenVideoArray == 1 {
 			components = messageComponents{}
 		} else {
@@ -721,8 +755,8 @@ func (b *Bot) interactionHandler(s *discordgo.Session, i *discordgo.InteractionC
 
 			components = messageComponents{discordgo.ActionsRow{
 				Components: []discordgo.MessageComponent{
-					b.newButton("Next Random",
-						"new_random_from_playlist",
+					b.newButton("New Random",
+						"new_random",
 						discordgo.PrimaryButton, discordgo.ComponentEmoji{Name: "bluestar", ID: "1221587912861417613"})},
 			}}
 		}
@@ -881,10 +915,10 @@ func (b *Bot) MessageHandler(s *discordgo.Session, m *discordgo.MessageCreate) {
 		return
 	}
 
-	if m.Interaction != nil && ((*m.Interaction).Name == "random_from_playlist" || (*m.Interaction).Name == "search_select_menu") {
-		if m, ok := b.openCommands[fmt.Sprintf("%s_%s", m.Interaction.User.ID, (*m.Interaction).Name)]; ok {
+	if m.Interaction != nil && ((*m.Interaction).Name == "new_random" || (*m.Interaction).Name == "search_select_menu") {
+		if m, ok := b.openCommands[fmt.Sprintf("%s-%s", m.Interaction.User.ID, (*m.Interaction).Name)]; ok {
 			s.ChannelMessageDelete(m.ChannelID, m.ID)
 		}
-		b.openCommands[fmt.Sprintf("%s_%s", m.Interaction.User.ID, (*m.Interaction).Name)] = m.Message
+		b.openCommands[fmt.Sprintf("%s-%s", m.Interaction.User.ID, (*m.Interaction).Name)] = m.Message
 	}
 }
