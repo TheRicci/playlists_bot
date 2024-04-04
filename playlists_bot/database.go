@@ -19,7 +19,7 @@ type database struct {
 }
 
 type User struct {
-	ID            string
+	ID            string `bun:",pk"`
 	Name          string
 	Updated_at    *time.Time
 	Created_at    *time.Time
@@ -27,7 +27,7 @@ type User struct {
 }
 
 type Playlist struct {
-	ID            string
+	ID            string `bun:",pk"`
 	User_id       string
 	Title         string
 	Description   string
@@ -39,7 +39,7 @@ type Playlist struct {
 }
 
 type Video struct {
-	ID            string
+	ID            string `bun:",pk"`
 	Title         string
 	Description   string
 	Thumbnail     string

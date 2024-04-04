@@ -251,7 +251,7 @@ var (
 				return
 			}
 
-			_, err = tx.NewInsert().Model(videos).Exec(ctx)
+			_, err = tx.NewInsert().Model(videos).On("CONFLICT (id) DO UPDATE").Exec(ctx)
 			if err != nil {
 				_, _ = s.InteractionResponseEdit(i.Interaction, &discordgo.WebhookEdit{Content: &errorString})
 				log.Err(err).Msgf("[%s] error while inserting videos on tx", i.ApplicationCommandData().Name)
@@ -284,22 +284,50 @@ var (
 			ctx := context.Background()
 			options := i.ApplicationCommandData().Options
 
-			var playlists []Playlist
-			err := b.DB.NewSelect().Model(&playlists).Where("user_id = ? AND id = ?", i.Member.User.ID, options[0].StringValue()).Scan(ctx)
+			var playlist Playlist
+			err := b.DB.NewSelect().Model(&playlist).Where("user_id = ? AND id = ?", i.Member.User.ID, options[0].StringValue()).Scan(ctx)
 			if err != nil {
-				_ = s.InteractionRespond(i.Interaction, b.newSimpleInteraction("playlist not registered.", int(discordgo.InteractionResponseChannelMessageWithSource), 64))
+				if err == sql.ErrNoRows {
+					_ = s.InteractionRespond(i.Interaction, b.newSimpleInteraction("playlist not registered.", int(discordgo.InteractionResponseChannelMessageWithSource), 64))
+					return
+				} else {
+					_ = s.InteractionRespond(i.Interaction, b.newSimpleInteraction("internal error", int(discordgo.InteractionResponseChannelMessageWithSource), 64))
+					log.Err(err).Msgf("[%s] error while checking if playlist exists.", i.ApplicationCommandData().Name)
+					return
+				}
+			}
+
+			tx, err := b.DB.BeginTx(context.Background(), &sql.TxOptions{})
+			if err != nil {
+				_ = s.InteractionRespond(i.Interaction, b.newSimpleInteraction("internal error", int(discordgo.InteractionResponseChannelMessageWithSource), 64))
+				log.Err(err).Msgf("[%s] error while initializing a transaction", i.ApplicationCommandData().Name)
 				return
 			}
 
-			_, err = b.DB.NewDelete().Model(&playlists).WherePK().Exec(ctx)
+			_, err = tx.NewDelete().Model((*PlaylistVideo)(nil)).Where("playlist_id = ?", options[0].StringValue()).Exec(ctx)
 			if err != nil {
 				_ = s.InteractionRespond(i.Interaction, b.newSimpleInteraction("internal error", int(discordgo.InteractionResponseChannelMessageWithSource), 64))
-				log.Err(err).Msgf("[remove_playlist] error while deleting playlistis")
+				log.Err(err).Msgf("[%s] error while deleting playlists in the juction table", i.ApplicationCommandData().Name)
+				return
+			}
+
+			_, err = tx.NewDelete().Model(&playlist).WherePK().Exec(ctx)
+			if err != nil {
+				_ = s.InteractionRespond(i.Interaction, b.newSimpleInteraction("internal error", int(discordgo.InteractionResponseChannelMessageWithSource), 64))
+				log.Err(err).Msgf("[%s] error while deleting playlists", i.ApplicationCommandData().Name)
+				return
+			}
+
+			err = tx.Commit()
+			if err != nil {
+				_ = s.InteractionRespond(i.Interaction, b.newSimpleInteraction("internal error", int(discordgo.InteractionResponseChannelMessageWithSource), 64))
+				log.Err(err).Msgf("[%s] error while commiting transaction", i.ApplicationCommandData().Name)
 				return
 			}
 
 			_ = s.InteractionRespond(i.Interaction, b.newSimpleInteraction("Playlist was deleted succesfully", int(discordgo.InteractionResponseChannelMessageWithSource), 64))
 
+			go b.removeDanglingVideos()
 		},
 		"show_playlists": func(s *discordgo.Session, i *discordgo.InteractionCreate, b *Bot) {
 			ctx := context.Background()
@@ -539,13 +567,7 @@ var (
 
 			_ = s.InteractionRespond(i.Interaction, b.newSimpleInteraction("playlist refreshed successfully.", int(discordgo.InteractionResponseChannelMessageWithSource), 64))
 
-			go func() {
-				//deleting videos with no playlists
-				_, err := b.DB.NewDelete().NewRaw("DELETE FROM video WHERE id NOT IN (SELECT DISTINCT video_id FROM playlist_video);").Exec(ctx)
-				if err != nil {
-					log.Err(err).Msgf("[%s] error while deleting dangling videos", i.ApplicationCommandData().Name)
-				}
-			}()
+			go b.removeDanglingVideos()
 
 		},
 		"random_from_playlist": func(s *discordgo.Session, i *discordgo.InteractionCreate, b *Bot) {
@@ -901,6 +923,14 @@ func (b *Bot) newInteraction(title string, respType int, embed discordgo.Message
 			Embeds:     []*discordgo.MessageEmbed{&embed},
 			Components: mC,
 		},
+	}
+}
+
+func (b *Bot) removeDanglingVideos() {
+	//deleting videos with no playlists
+	_, err := b.DB.NewDelete().NewRaw("DELETE FROM \"playlistsDB_video\" WHERE id NOT IN (SELECT DISTINCT video_id FROM \"playlistsDB_playlist_video\");").Exec(context.Background())
+	if err != nil {
+		log.Err(err).Msg("error while deleting dangling videos")
 	}
 }
 
