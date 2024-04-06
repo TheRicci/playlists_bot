@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -30,12 +31,12 @@ var (
 	commands = []*discordgo.ApplicationCommand{
 		{
 			Name:        "add_playlist",
-			Description: "i.ApplicationCommandData().Name for adding a playlist",
+			Description: "command to add playlist",
 			Options: []*discordgo.ApplicationCommandOption{
 				{
 					Type:        discordgo.ApplicationCommandOptionString,
-					Name:        "id",
-					Description: "playlist string",
+					Name:        "link",
+					Description: "playlist link",
 					Required:    true,
 				},
 				{
@@ -62,36 +63,36 @@ var (
 		},
 		{
 			Name:        "remove_playlist",
-			Description: "i.ApplicationCommandData().Name for removing a playlist",
+			Description: "command to remove playlist",
 			Options: []*discordgo.ApplicationCommandOption{
 				{
 					Type:        discordgo.ApplicationCommandOptionString,
-					Name:        "id",
-					Description: "playlist string",
+					Name:        "playlist",
+					Description: "title or id",
 					Required:    true,
 				},
 			},
 		},
 		{
 			Name:        "show_playlists",
-			Description: "i.ApplicationCommandData().Name for adding a playlist",
+			Description: "command to show playlist",
 			Options: []*discordgo.ApplicationCommandOption{
 				{
 					Type:        discordgo.ApplicationCommandOptionString,
 					Name:        "user",
-					Description: "query an user's playlists",
+					Description: "specify a user",
 					Required:    false,
 				},
 			},
 		},
 		{
 			Name:        "search",
-			Description: "search a string in all playlists",
+			Description: "search through all playlists",
 			Options: []*discordgo.ApplicationCommandOption{
 				{
 					Type:        discordgo.ApplicationCommandOptionString,
 					Name:        "string",
-					Description: "query an user's playlists",
+					Description: "string to search through the playlists",
 					Required:    true,
 				},
 				{
@@ -104,30 +105,30 @@ var (
 		},
 		{
 			Name:        "search_in_playlist",
-			Description: "search a string in one specific playlist",
+			Description: "search through a specific playlist",
 			Options: []*discordgo.ApplicationCommandOption{
 				{
 					Type:        discordgo.ApplicationCommandOptionString,
-					Name:        "playlist-id",
-					Description: "query an user's playlists",
+					Name:        "playlist",
+					Description: "title or id",
 					Required:    true,
 				},
 				{
-					Type:        discordgo.ApplicationCommandOptionUser,
+					Type:        discordgo.ApplicationCommandOptionString,
 					Name:        "string",
-					Description: "query an user's playlists",
+					Description: "string to search through the playlist",
 					Required:    true,
 				},
 			},
 		},
 		{
 			Name:        "random",
-			Description: "get random video from all videos on registered playlists",
+			Description: "get a random video from all videos registered from user",
 			Options: []*discordgo.ApplicationCommandOption{
 				{
 					Type:        discordgo.ApplicationCommandOptionUser,
 					Name:        "user",
-					Description: "query an user's playlists",
+					Description: "get random video",
 					Required:    false,
 				},
 			},
@@ -138,8 +139,8 @@ var (
 			Options: []*discordgo.ApplicationCommandOption{
 				{
 					Type:        discordgo.ApplicationCommandOptionString,
-					Name:        "playlist-id",
-					Description: "query an user's playlists",
+					Name:        "playlist",
+					Description: "title or id",
 					Required:    true,
 				},
 			},
@@ -150,8 +151,8 @@ var (
 			Options: []*discordgo.ApplicationCommandOption{
 				{
 					Type:        discordgo.ApplicationCommandOptionString,
-					Name:        "playlist-id",
-					Description: "query an user's playlists",
+					Name:        "playlist",
+					Description: "title or id",
 					Required:    true,
 				},
 			},
@@ -202,7 +203,21 @@ var (
 			options := i.ApplicationCommandData().Options
 			errorString := "Internal error."
 
-			err := b.DB.NewSelect().Model(&Playlist{}).Where("id = ?", options[0].StringValue()).Scan(ctx)
+			regex := regexp.MustCompile(`(?:https?:\/\/)?(?:www\.)?(?:youtube\.com\/(?:[^\/\n\s]+\/\S+\/|(?:v|e(?:mbed)?)\/|\S*?[?&]list=)|youtu\.be\/)([a-zA-Z0-9_-]{18,34})`)
+			matches := regex.FindStringSubmatch(options[0].StringValue())
+
+			if len(matches) < 2 {
+				_ = s.InteractionRespond(i.Interaction, b.newSimpleInteraction("invalid link", int(discordgo.InteractionResponseChannelMessageWithSource), 64))
+				return
+			}
+
+			err := b.DB.NewSelect().Model(&Playlist{}).Where("id = ?", matches[1]).Scan(ctx)
+			if err == nil {
+				_ = s.InteractionRespond(i.Interaction, b.newSimpleInteraction("title already exists", int(discordgo.InteractionResponseChannelMessageWithSource), 64))
+				return
+			}
+
+			err = b.DB.NewSelect().Model(&Playlist{}).Where("title = ? AND user_id = ?", options[1].StringValue(), i.Member.User.ID).Scan(ctx)
 			if err == nil {
 				_ = s.InteractionRespond(i.Interaction, b.newSimpleInteraction("playlist already added.", int(discordgo.InteractionResponseChannelMessageWithSource), 64))
 				return
@@ -233,7 +248,7 @@ var (
 				}
 			}
 
-			videos, err := fetchVideos(options[0].StringValue())
+			videos, err := fetchVideos(matches[1])
 			if err != nil {
 				log.Err(err).Msg("[%s] error while fetching videos from youtube") //
 				if strings.HasPrefix(err.Error(), "The playlist identified") {
@@ -244,7 +259,7 @@ var (
 				return
 			}
 
-			_, err = tx.NewInsert().Model(&Playlist{ID: options[0].StringValue(), User_id: i.Member.User.ID, Title: options[1].StringValue(), Description: options[2].StringValue(), Thumbnail: (*videos)[0].Thumbnail, Updated_at: &now, Created_at: &now}).Exec(ctx)
+			_, err = tx.NewInsert().Model(&Playlist{ID: matches[1], User_id: i.Member.User.ID, Title: options[1].StringValue(), Description: options[2].StringValue(), Thumbnail: (*videos)[0].Thumbnail, Updated_at: &now, Created_at: &now}).Exec(ctx)
 			if err != nil {
 				_, _ = s.InteractionResponseEdit(i.Interaction, &discordgo.WebhookEdit{Content: &errorString})
 				log.Err(err).Msgf("[%s] error while inserting playlist on tx", i.ApplicationCommandData().Name)
@@ -260,7 +275,7 @@ var (
 
 			var junctionTable []PlaylistVideo
 			for _, v := range *videos {
-				junctionTable = append(junctionTable, PlaylistVideo{Video_id: v.ID, Playlist_id: options[0].StringValue()})
+				junctionTable = append(junctionTable, PlaylistVideo{Video_id: v.ID, Playlist_id: matches[1]})
 			}
 
 			_, err = tx.NewInsert().Model(&junctionTable).Exec(ctx)
@@ -285,7 +300,7 @@ var (
 			options := i.ApplicationCommandData().Options
 
 			var playlist Playlist
-			err := b.DB.NewSelect().Model(&playlist).Where("user_id = ? AND id = ?", i.Member.User.ID, options[0].StringValue()).Scan(ctx)
+			err := b.DB.NewSelect().Model(&playlist).Where("user_id = ? AND (id = ? OR title = ?)", i.Member.User.ID, options[0].StringValue(), options[0].StringValue()).Scan(ctx)
 			if err != nil {
 				if err == sql.ErrNoRows {
 					_ = s.InteractionRespond(i.Interaction, b.newSimpleInteraction("playlist not registered.", int(discordgo.InteractionResponseChannelMessageWithSource), 64))
@@ -410,7 +425,7 @@ var (
 			options := i.ApplicationCommandData().Options
 
 			var playlist Playlist
-			err := b.DB.NewSelect().Model(&playlist).Where("id = ? AND user_id = ?", options[0].StringValue(), i.Member.User.ID).Scan(ctx)
+			err := b.DB.NewSelect().Model(&playlist).Where("(id = ? OR title = ?) AND user_id = ?", options[0].StringValue(), options[0].StringValue(), i.Member.User.ID).Scan(ctx)
 			if err != nil {
 				if err == sql.ErrNoRows {
 					_ = s.InteractionRespond(i.Interaction, b.newSimpleInteraction("playlist not found.", int(discordgo.InteractionResponseChannelMessageWithSource), 64))
@@ -429,7 +444,8 @@ var (
 				ColumnExpr("v.thumbnail").
 				ColumnExpr("v.channel_title").
 				Join("JOIN \"playlistsDB_video\" AS v ON v.id = video_query.video_id").
-				Where("video_query.playlist_id = ?", options[0].StringValue()).
+				Join("JOIN \"playlistsDB_playlist\" AS p ON p.id = video_query.playlist_id").
+				Where("p.id = ? OR p.title = ?", options[0].StringValue(), options[0].StringValue()).
 				Scan(ctx)
 			if err != nil {
 				_ = s.InteractionRespond(i.Interaction, b.newSimpleInteraction("internal error", int(discordgo.InteractionResponseChannelMessageWithSource), 64))
@@ -466,7 +482,7 @@ var (
 			options := i.ApplicationCommandData().Options
 
 			var playlist Playlist
-			err := b.DB.NewSelect().Model(&playlist).Where("id = ? AND user_id = ?", options[0].StringValue(), i.Member.User.ID).Scan(ctx)
+			err := b.DB.NewSelect().Model(&playlist).Where("(id = ? OR title = ?) AND user_id = ?", options[0].StringValue(), options[0].StringValue(), i.Member.User.ID).Scan(ctx)
 			if err != nil {
 				if err == sql.ErrNoRows {
 					_ = s.InteractionRespond(i.Interaction, b.newSimpleInteraction("playlist not found.", int(discordgo.InteractionResponseChannelMessageWithSource), 64))
@@ -575,7 +591,7 @@ var (
 			options := i.ApplicationCommandData().Options
 
 			var Playlist Playlist
-			err := b.DB.NewSelect().Model(&Playlist).Where("id = ? AND user_id = ?", options[0].StringValue(), i.Member.User.ID).Scan(ctx)
+			err := b.DB.NewSelect().Model(&Playlist).Where("(id = ? OR title = ?) AND user_id = ?", options[0].StringValue(), options[0].StringValue(), i.Member.User.ID).Scan(ctx)
 			if err != nil {
 				if err == sql.ErrNoRows {
 					_ = s.InteractionRespond(i.Interaction, b.newSimpleInteraction("playlist not found.", int(discordgo.InteractionResponseChannelMessageWithSource), 64))
@@ -594,7 +610,8 @@ var (
 				ColumnExpr("v.thumbnail").
 				ColumnExpr("v.channel_title").
 				Join("JOIN \"playlistsDB_video\" AS v ON v.id = video_query.video_id").
-				Where("video_query.playlist_id = ?", options[0].StringValue()).
+				Join("JOIN \"playlistsDB_playlist\" AS p ON p.id = video_query.playlist_id").
+				Where("p.id = ? OR p.title = ?", options[0].StringValue(), options[0].StringValue()).
 				OrderExpr("RANDOM()").
 				Scan(ctx)
 			if err != nil {
