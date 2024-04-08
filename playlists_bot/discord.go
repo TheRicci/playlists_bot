@@ -784,6 +784,11 @@ func (b *Bot) interactionHandler(s *discordgo.Session, i *discordgo.InteractionC
 			return
 		}
 
+		s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+			Type: discordgo.InteractionResponseDeferredChannelMessageWithSource,
+			Data: &discordgo.InteractionResponseData{Content: "wait1", CustomID: "wait"},
+		})
+
 		video := (*b.randomMap[fmt.Sprintf("%s-%s", i.Member.User.ID, mC.CustomID)])[0]
 		var components messageComponents
 		if lenVideoArray == 1 {
@@ -800,11 +805,6 @@ func (b *Bot) interactionHandler(s *discordgo.Session, i *discordgo.InteractionC
 			}}
 		}
 
-		s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
-			Type: discordgo.InteractionResponseDeferredChannelMessageWithSource,
-			Data: &discordgo.InteractionResponseData{Content: "wait", CustomID: "wait"},
-		})
-
 		embed := b.newEmbed(
 			video.Title,
 			video.Channel_title,
@@ -812,11 +812,16 @@ func (b *Bot) interactionHandler(s *discordgo.Session, i *discordgo.InteractionC
 			video.Thumbnail)
 		s.ChannelMessageEditComplex(&discordgo.MessageEdit{
 			Components: components,
-			Embeds:     []*discordgo.MessageEmbed{&embed},
+			Embed:      &embed,
 			ID:         i.Message.ID,
 			Channel:    i.ChannelID,
 		})
 	case "search_select_menu":
+		s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+			Type: discordgo.InteractionResponseDeferredChannelMessageWithSource,
+			Data: &discordgo.InteractionResponseData{Content: "wait1", CustomID: "wait2", Title: "wait3"},
+		})
+
 		menuState := b.openCommandSearch[i.Member.User.ID]
 		videoIndex, _ := strconv.Atoi(mC.Values[0])
 		list := *menuState.list[menuState.currentIndex]
@@ -829,30 +834,45 @@ func (b *Bot) interactionHandler(s *discordgo.Session, i *discordgo.InteractionC
 		for _, b := range menuState.currentButtons {
 			buttonsComps = append(buttonsComps, b)
 		}
-		components = append(components, discordgo.ActionsRow{Components: buttonsComps})
 
-		s.InteractionRespond(i.Interaction, b.newInteraction("search", int(discordgo.InteractionResponseChannelMessageWithSource), b.newEmbed(
+		components = append(components, discordgo.ActionsRow{Components: buttonsComps})
+		embed := b.newEmbed(
 			menuState.videos[actualVideoIndex].Title,
 			menuState.videos[actualVideoIndex].Channel_title,
 			menuState.videos[actualVideoIndex].ID,
-			menuState.videos[actualVideoIndex].Thumbnail), components),
-		)
-
+			menuState.videos[actualVideoIndex].Thumbnail)
+		s.ChannelMessageEditComplex(&discordgo.MessageEdit{
+			Embed:      &embed,
+			Components: components,
+			Flags:      i.Message.Flags,
+			ID:         i.Message.ID,
+			Channel:    i.ChannelID,
+		})
 	case "next_search_list":
 		menuState := b.openCommandSearch[i.Member.User.ID]
 		menuState.currentIndex++
 		menuState = b.searchMenu(i, s, menuState)
 		b.openCommandSearch[i.Member.User.ID] = menuState
+
 	case "previous_search_list":
 		menuState := b.openCommandSearch[i.Member.User.ID]
 		menuState.currentIndex--
 		menuState = b.searchMenu(i, s, menuState)
 		b.openCommandSearch[i.Member.User.ID] = menuState
+
+	default:
+		return
 	}
 
+	b.interactionEnd <- i.Message.ID
 }
 
 func (b *Bot) searchMenu(i *discordgo.InteractionCreate, s *discordgo.Session, menuState MenuSelectionState) MenuSelectionState {
+	s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+		Type: discordgo.InteractionResponseDeferredChannelMessageWithSource,
+		Data: &discordgo.InteractionResponseData{Content: "wait", CustomID: "wait"},
+	})
+
 	buttons := b.buttonsChange(menuState.currentIndex, menuState.maxIndex)
 	menuState.currentButtons = buttons
 	list := *menuState.list[menuState.currentIndex]
@@ -870,12 +890,19 @@ func (b *Bot) searchMenu(i *discordgo.InteractionCreate, s *discordgo.Session, m
 	}
 	components = append(components, discordgo.ActionsRow{Components: buttonsComps})
 
-	s.InteractionRespond(i.Interaction, b.newInteraction("search", int(discordgo.InteractionResponseChannelMessageWithSource), b.newEmbed(
+	embed := b.newEmbed(
 		menuState.videos[actualVideoIndex].Title,
 		menuState.videos[actualVideoIndex].Channel_title,
 		menuState.videos[actualVideoIndex].ID,
-		menuState.videos[actualVideoIndex].Thumbnail), components),
-	)
+		menuState.videos[actualVideoIndex].Thumbnail)
+
+	s.ChannelMessageEditComplex(&discordgo.MessageEdit{
+		Embed:      &embed,
+		Components: components,
+		Flags:      i.Message.Flags,
+		ID:         i.Message.ID,
+		Channel:    i.ChannelID,
+	})
 
 	return menuState
 }
@@ -957,15 +984,16 @@ func (b *Bot) MessageHandler(s *discordgo.Session, m *discordgo.MessageCreate) {
 	}
 
 	if len((*m.Message).Embeds) == 0 && (*m.Message).Type == 19 && (*m.Message).Content == "" {
-		time.Sleep(time.Second)
-		s.ChannelMessageDelete(m.ChannelID, m.ID)
-		return
-	}
-
-	if m.Interaction != nil && ((*m.Interaction).Name == "new_random" || (*m.Interaction).Name == "search_select_menu") {
-		if m, ok := b.openCommands[fmt.Sprintf("%s-%s", m.Interaction.User.ID, (*m.Interaction).Name)]; ok {
-			s.ChannelMessageDelete(m.ChannelID, m.ID)
+		for {
+			select {
+			case mID := <-b.interactionEnd:
+				if mID != m.MessageReference.MessageID {
+					continue
+				}
+				s.ChannelMessageDelete(m.ChannelID, m.ID)
+				return
+			}
 		}
-		b.openCommands[fmt.Sprintf("%s-%s", m.Interaction.User.ID, (*m.Interaction).Name)] = m.Message
+
 	}
 }

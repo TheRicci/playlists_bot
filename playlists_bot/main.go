@@ -16,8 +16,8 @@ type Bot struct {
 	*discordgo.Session
 	*database
 	randomMap         map[string]*[]videoQuery //no need to use mutex, every key will only be accessed by one user
-	openCommands      map[string]*discordgo.Message
 	openCommandSearch map[string]MenuSelectionState
+	interactionEnd    chan string
 }
 
 type MenuSelectionState struct {
@@ -38,8 +38,8 @@ func newBot() Bot {
 		dg,
 		newDB(),
 		make(map[string]*[]videoQuery),
-		make(map[string]*discordgo.Message),
 		make(map[string]MenuSelectionState),
+		make(chan string),
 	}
 }
 
