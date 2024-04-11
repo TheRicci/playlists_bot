@@ -51,14 +51,12 @@ var (
 					Description: "playlist description",
 					Required:    true,
 				},
-				/*
-					{
-						Type:        discordgo.ApplicationCommandOptionBoolean,
-						Name:        "private?",
-						Description: "activate playlist privacy",
-						Required:    true,
-					},
-				*/
+				{
+					Type:        discordgo.ApplicationCommandOptionBoolean,
+					Name:        "is_private",
+					Description: "activate playlist privacy",
+					Required:    true,
+				},
 			},
 		},
 		{
@@ -86,6 +84,10 @@ var (
 			},
 		},
 		{
+			Name:        "show_private_playlists",
+			Description: "command to show playlist",
+		},
+		{
 			Name:        "search",
 			Description: "search through all playlists",
 			Options: []*discordgo.ApplicationCommandOption{
@@ -96,9 +98,15 @@ var (
 					Required:    true,
 				},
 				{
+					Type:        discordgo.ApplicationCommandOptionBoolean,
+					Name:        "include_private",
+					Description: "true or false",
+					Required:    false,
+				},
+				{
 					Type:        discordgo.ApplicationCommandOptionUser,
 					Name:        "user",
-					Description: "query an user's playlists",
+					Description: "query user's videos",
 					Required:    false,
 				},
 			},
@@ -125,6 +133,12 @@ var (
 			Name:        "random",
 			Description: "get a random video from all videos registered from user",
 			Options: []*discordgo.ApplicationCommandOption{
+				{
+					Type:        discordgo.ApplicationCommandOptionBoolean,
+					Name:        "include_private",
+					Description: "true or false",
+					Required:    false,
+				},
 				{
 					Type:        discordgo.ApplicationCommandOptionUser,
 					Name:        "user",
@@ -177,14 +191,14 @@ var (
 				Options: []*discordgo.ApplicationCommandOption{
 					{
 						Type:        discordgo.ApplicationCommandOptionString,
-						Name:        "playlist-id",
-						Description: "use channel id to add everything",
+						Name:        "playlist",
+						Description: "title or id",
 						Required:    true,
 					},
 					{
-						Type:        discordgo.ApplicationCommandOptionString,
-						Name:        "playlist-id",
-						Description: "use channel id to add everything",
+						Type:        discordgo.ApplicationCommandOptionBoolean,
+						Name:        "private?",
+						Description: "true or false",
 						Required:    true,
 					},
 				},
@@ -259,7 +273,7 @@ var (
 				return
 			}
 
-			_, err = tx.NewInsert().Model(&Playlist{ID: matches[1], User_id: i.Member.User.ID, Title: options[1].StringValue(), Description: options[2].StringValue(), Thumbnail: (*videos)[0].Thumbnail, Updated_at: &now, Created_at: &now}).Exec(ctx)
+			_, err = tx.NewInsert().Model(&Playlist{ID: matches[1], User_id: i.Member.User.ID, Title: options[1].StringValue(), Description: options[2].StringValue(), Thumbnail: (*videos)[0].Thumbnail, Is_private: options[3].BoolValue(), Updated_at: &now, Created_at: &now}).Exec(ctx)
 			if err != nil {
 				_, _ = s.InteractionResponseEdit(i.Interaction, &discordgo.WebhookEdit{Content: &errorString})
 				log.Err(err).Msgf("[%s] error while inserting playlist on tx", i.ApplicationCommandData().Name)
@@ -345,57 +359,57 @@ var (
 			go b.removeDanglingVideos()
 		},
 		"show_playlists": func(s *discordgo.Session, i *discordgo.InteractionCreate, b *Bot) {
-			ctx := context.Background()
 			options := i.ApplicationCommandData().Options
 			user := i.Member.User
 			if len(options) != 0 {
 				user, _ = s.User(options[0].StringValue())
 			}
 
-			var playlists []Playlist
-			err := b.DB.NewSelect().Model(&playlists).Where("user_id = ?", user.ID).Scan(ctx)
-			if err != nil {
-				_ = s.InteractionRespond(i.Interaction, b.newSimpleInteraction("user has no playlists registered.", int(discordgo.InteractionResponseChannelMessageWithSource), 64))
-				return
-			}
+			b.showPlaylists(s, i, user, false, 8)
 
-			var fields []*discordgo.MessageEmbedField
-			for i, p := range playlists {
-				fields = append(fields, &discordgo.MessageEmbedField{Name: fmt.Sprintf("#%v %s", i+1, p.Title), Value: fmt.Sprintf("https://www.youtube.com/playlist?list=%s", p.ID)})
-			}
-
-			var embed []*discordgo.MessageEmbed
-			_ = s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
-				Type: discordgo.InteractionResponseChannelMessageWithSource,
-				Data: &discordgo.InteractionResponseData{
-					Flags: discordgo.MessageFlags(8),
-					Embeds: append(embed, &discordgo.MessageEmbed{
-						Title:     fmt.Sprintf("%s's Playlists", strings.Title(strings.ToLower(user.Username))),
-						Thumbnail: &discordgo.MessageEmbedThumbnail{URL: user.AvatarURL("")},
-						Fields:    fields,
-					}),
-				},
-			})
+		},
+		"show_private_playlists": func(s *discordgo.Session, i *discordgo.InteractionCreate, b *Bot) {
+			b.showPlaylists(s, i, i.Member.User, true, 64)
 
 		},
 		"search": func(s *discordgo.Session, interaction *discordgo.InteractionCreate, b *Bot) {
 			ctx := context.Background()
 			options := interaction.ApplicationCommandData().Options
 			user := interaction.Member.User.ID
-			if len(options) == 2 {
-				user = options[1].UserValue(s).ID
+			private, user_set := false, false
+
+			if len(options) > 1 {
+				for _, o := range options {
+					if o.Type == discordgo.ApplicationCommandOptionBoolean {
+						private = o.BoolValue()
+					} else {
+						user = o.UserValue(s).ID
+						user_set = true
+					}
+				}
+			}
+			if user_set && private {
+				_ = s.InteractionRespond(interaction.Interaction, b.newSimpleInteraction("can't access private videos from another user", int(discordgo.InteractionResponseChannelMessageWithSource), 64))
 			}
 
 			var videos []videoQuery
-			err := b.DB.NewSelect().Model(&videos).
+			query := b.DB.NewSelect().Model(&videos).
 				ColumnExpr("v.id").
 				ColumnExpr("v.title").
 				ColumnExpr("v.thumbnail").
 				ColumnExpr("v.channel_title").
 				Join("JOIN \"playlistsDB_video\" AS v ON v.id = video_query.video_id").
 				Join("JOIN \"playlistsDB_playlist\" AS p ON p.id = video_query.playlist_id").
-				Where("p.user_id = ?", user).
-				Scan(ctx)
+				Where("p.user_id = ?", user)
+
+			flags := 16
+			if private {
+				flags = 64
+			} else {
+				query = query.Where("p.is_private = false")
+			}
+
+			err := query.Scan(ctx)
 			if err != nil {
 				_ = s.InteractionRespond(interaction.Interaction, b.newSimpleInteraction("internal error", int(discordgo.InteractionResponseChannelMessageWithSource), 64))
 				log.Err(err).Msgf("[%s] error while checking if playlist exists.", interaction.ApplicationCommandData().Name)
@@ -416,7 +430,7 @@ var (
 				video.Title,
 				video.Channel_title,
 				video.ID,
-				video.Thumbnail), *components),
+				video.Thumbnail), *components, flags),
 			)
 
 		},
@@ -435,6 +449,11 @@ var (
 					log.Err(err).Msgf("[%s] error while checking if playlist exists.", i.ApplicationCommandData().Name)
 					return
 				}
+			}
+
+			flags := 16
+			if playlist.Is_private {
+				flags = 64
 			}
 
 			var videos []videoQuery
@@ -467,7 +486,7 @@ var (
 				video.Title,
 				video.Channel_title,
 				video.ID,
-				video.Thumbnail), *components),
+				video.Thumbnail), *components, flags),
 			)
 
 		},
@@ -590,8 +609,8 @@ var (
 			ctx := context.Background()
 			options := i.ApplicationCommandData().Options
 
-			var Playlist Playlist
-			err := b.DB.NewSelect().Model(&Playlist).Where("(id = ? OR title = ?) AND user_id = ?", options[0].StringValue(), options[0].StringValue(), i.Member.User.ID).Scan(ctx)
+			var playlist Playlist
+			err := b.DB.NewSelect().Model(&playlist).Where("(id = ? OR title = ?) AND user_id = ?", options[0].StringValue(), options[0].StringValue(), i.Member.User.ID).Scan(ctx)
 			if err != nil {
 				if err == sql.ErrNoRows {
 					_ = s.InteractionRespond(i.Interaction, b.newSimpleInteraction("playlist not found.", int(discordgo.InteractionResponseChannelMessageWithSource), 64))
@@ -601,6 +620,11 @@ var (
 					log.Err(err).Msgf("[%s] error while checking if playlist exists.", i.ApplicationCommandData().Name)
 					return
 				}
+			}
+
+			flags := 16
+			if playlist.Is_private {
+				flags = 64
 			}
 
 			var videoQuery []videoQuery
@@ -632,7 +656,7 @@ var (
 				videoQuery[0].Title,
 				videoQuery[0].Channel_title,
 				videoQuery[0].ID,
-				videoQuery[0].Thumbnail), components),
+				videoQuery[0].Thumbnail), components, flags),
 			)
 
 		},
@@ -640,21 +664,40 @@ var (
 			ctx := context.Background()
 			options := i.ApplicationCommandData().Options
 			user := i.Member.User.ID
-			if len(options) == 1 {
-				user = options[0].UserValue(s).ID
+			private, user_set := false, false
+
+			if len(options) != 0 {
+				for _, o := range options {
+					if o.Type == discordgo.ApplicationCommandOptionBoolean {
+						private = o.BoolValue()
+					} else {
+						user = o.UserValue(s).ID
+						user_set = true
+					}
+				}
+			}
+			if user_set && private {
+				_ = s.InteractionRespond(i.Interaction, b.newSimpleInteraction("can't access private videos from another user", int(discordgo.InteractionResponseChannelMessageWithSource), 64))
 			}
 
 			var videoQuery []videoQuery
-			err := b.DB.NewSelect().Model(&videoQuery).
+			query := b.DB.NewSelect().Model(&videoQuery).
 				ColumnExpr("v.id").
 				ColumnExpr("v.title").
 				ColumnExpr("v.thumbnail").
 				ColumnExpr("v.channel_title").
 				Join("JOIN \"playlistsDB_video\" AS v ON v.id = video_query.video_id").
 				Join("JOIN \"playlistsDB_playlist\" AS p ON p.id = video_query.playlist_id").
-				Where("p.user_id = ?", user).
-				OrderExpr("RANDOM()").
-				Scan(ctx)
+				Where("p.user_id = ?", user)
+
+			flags := 16
+			if private {
+				flags = 64
+			} else {
+				query = query.Where("p.private = false")
+			}
+
+			err := query.OrderExpr("RANDOM()").Scan(ctx)
 			if err != nil {
 				_ = s.InteractionRespond(i.Interaction, b.newSimpleInteraction("internal error", int(discordgo.InteractionResponseChannelMessageWithSource), 64))
 				log.Err(err).Msgf("[%s] error while checking if playlist exists.", i.ApplicationCommandData().Name)
@@ -673,12 +716,41 @@ var (
 				videoQuery[0].Title,
 				videoQuery[0].Channel_title,
 				videoQuery[0].ID,
-				videoQuery[0].Thumbnail), components),
+				videoQuery[0].Thumbnail), components, flags),
 			)
 
 		},
 	}
 )
+
+func (b *Bot) showPlaylists(s *discordgo.Session, i *discordgo.InteractionCreate, user *discordgo.User, private bool, flags int) {
+	ctx := context.Background()
+	var playlists []Playlist
+	err := b.DB.NewSelect().Model(&playlists).Where("user_id = ? AND is_private = ?", user.ID, private).Scan(ctx)
+	if err != nil {
+		_ = s.InteractionRespond(i.Interaction, b.newSimpleInteraction("user has no playlists registered.", int(discordgo.InteractionResponseChannelMessageWithSource), 64))
+		return
+	}
+
+	var fields []*discordgo.MessageEmbedField
+	for i, p := range playlists {
+		fields = append(fields, &discordgo.MessageEmbedField{Name: fmt.Sprintf("#%v %s", i+1, p.Title), Value: fmt.Sprintf("https://www.youtube.com/playlist?list=%s", p.ID)})
+	}
+
+	var embed []*discordgo.MessageEmbed
+	_ = s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+		Type: discordgo.InteractionResponseChannelMessageWithSource,
+		Data: &discordgo.InteractionResponseData{
+			Flags: discordgo.MessageFlags(flags),
+			Embeds: append(embed, &discordgo.MessageEmbed{
+				Title:     fmt.Sprintf("%s's Playlists", strings.Title(strings.ToLower(user.Username))),
+				Thumbnail: &discordgo.MessageEmbedThumbnail{URL: user.AvatarURL("")},
+				Fields:    fields,
+			}),
+		},
+	})
+
+}
 
 func (b *Bot) searchFunction(q string, interaction *discordgo.InteractionCreate, videos []videoQuery) (*messageComponents, *videoQuery) {
 	indexMapping := bleve.NewIndexMapping()
@@ -958,12 +1030,12 @@ func (b *Bot) newSelectMenu(customID string, options []discordgo.SelectMenuOptio
 
 }
 
-func (b *Bot) newInteraction(title string, respType int, embed discordgo.MessageEmbed, mC []discordgo.MessageComponent) *discordgo.InteractionResponse {
+func (b *Bot) newInteraction(title string, respType int, embed discordgo.MessageEmbed, mC []discordgo.MessageComponent, flags int) *discordgo.InteractionResponse {
 	return &discordgo.InteractionResponse{
 		Type: discordgo.InteractionResponseType(respType),
 		Data: &discordgo.InteractionResponseData{
 			Title:      title,
-			Flags:      16,
+			Flags:      discordgo.MessageFlags(flags),
 			Embeds:     []*discordgo.MessageEmbed{&embed},
 			Components: mC,
 		},

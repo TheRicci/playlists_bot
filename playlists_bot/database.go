@@ -32,6 +32,7 @@ type Playlist struct {
 	Title         string
 	Description   string
 	Thumbnail     string
+	Is_private    bool
 	Updated_at    *time.Time
 	Created_at    *time.Time
 	Last_refresh  *time.Time
